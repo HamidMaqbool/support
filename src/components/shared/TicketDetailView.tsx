@@ -24,6 +24,7 @@ import {
   Star,
   Trash2,
   UserPlus,
+  UserCheck,
   ArrowRightLeft
 } from 'lucide-react';
 import { MOCK_TICKETS, MOCK_MESSAGES, MOCK_USERS } from '../../constants';
@@ -195,7 +196,8 @@ export default function TicketDetailView({ portal }: Props) {
     socket.on('message-received', (msg: Message) => {
       if (msg.ticketId === id) {
         setMessages(prev => {
-          if (prev.find(m => m.id === msg.id)) return prev;
+          // Robust deduplication: check real ID and temporary ID
+          if (prev.find(m => m.id === msg.id || (msg as any).tempId === m.id)) return prev;
           if (msg.senderId !== user?.id) playSound();
           return [...prev, msg];
         });
@@ -387,7 +389,7 @@ export default function TicketDetailView({ portal }: Props) {
   const [admins, setAdmins] = useState<any[]>([]);
   const [isAssigning, setIsAssigning] = useState(false);
 
-  const isManager = user?.role === 'admin' && (user as any)?.roles?.includes('manager');
+  const isAdmin = user?.role === 'admin';
 
   useEffect(() => {
     const fetchAdmins = async () => {
@@ -587,7 +589,9 @@ export default function TicketDetailView({ portal }: Props) {
         setNewTicket({ subject: '', category: 'Technical', message: '' });
         navigate(`/user/ticket/${created.id}`);
       } else {
-        toast.error('Failed to create ticket');
+        const errorData = await res.json();
+        toast.error(`Failed to create ticket: ${errorData.message || 'Unknown error'}`);
+        if (errorData.error) console.error('Ticket creation detail:', errorData.error);
       }
     } catch (err) {
       console.error('Create ticket error:', err);
@@ -1197,6 +1201,13 @@ export default function TicketDetailView({ portal }: Props) {
                            <span className="text-xs text-slate-500 flex items-center gap-2"><Tag size={12} /> Category</span>
                            <span className="text-xs font-bold text-slate-700">{ticket.category}</span>
                         </div>
+                        <div className="flex items-center justify-between">
+                           <span className="text-xs text-slate-500 flex items-center gap-2"><UserCheck size={12} /> Assignee</span>
+                           <span className="text-xs font-bold text-slate-700">
+                             {admins.find(a => a.id === ticket.assignedTo)?.name || 
+                              (ticket.assignedTo === user?.id ? 'Me' : 'Unassigned')}
+                           </span>
+                        </div>
                         {ticketTags.length > 0 && (
                           <div className="pt-2 flex flex-wrap gap-1.5">
                             {ticketTags.map(tag => (
@@ -1209,14 +1220,14 @@ export default function TicketDetailView({ portal }: Props) {
                      </div>
                    </section>
     
-                   {portal === 'admin' && isManager && (
+                   {portal === 'admin' && isAdmin && (
                      <section className="pt-6 border-t border-slate-100">
                         <h4 className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-4">Internal Controls</h4>
                         <div className="grid grid-cols-2 gap-2">
                            <DropdownMenu>
                              <DropdownMenuTrigger asChild>
                                <Button variant="outline" size="sm" className="w-full text-[10px] font-bold tracking-tight rounded-lg h-9 border-slate-200" disabled={isAssigning}>
-                                  {isAssigning ? 'Assigning...' : 'Re-Assign'}
+                                  {isAssigning ? 'Assigning...' : (ticket.assignedTo ? 'Change Agent' : 'Assign Ticket')}
                                </Button>
                              </DropdownMenuTrigger>
                              <DropdownMenuContent align="end" className="w-[200px] rounded-xl p-1 bg-white shadow-xl border border-slate-200">
@@ -1231,6 +1242,7 @@ export default function TicketDetailView({ portal }: Props) {
                                       <span>Assign to me</span>
                                       <span className="text-[8px] text-slate-400 font-bold uppercase tracking-tight">{(user as any)?.roles?.join(' • ') || 'Agent'}</span>
                                    </div>
+                                   {ticket.assignedTo === user?.id && <CheckCircle2 size={12} className="ml-auto text-primary" />}
                                 </DropdownMenuItem>
                                 {admins.filter(a => a.id !== user?.id).map((admin) => (
                                   <DropdownMenuItem key={admin.id} onClick={() => handleAssignTicket(admin.id)} className="rounded-lg text-xs gap-2 cursor-pointer focus:bg-primary/5 focus:text-primary">
@@ -1241,6 +1253,7 @@ export default function TicketDetailView({ portal }: Props) {
                                         <span>{admin.name}</span>
                                         <span className="text-[8px] text-slate-400 font-bold uppercase tracking-tight">{admin.roles?.join(' • ') || 'Agent'}</span>
                                      </div>
+                                     {ticket.assignedTo === admin.id && <CheckCircle2 size={12} className="ml-auto text-primary" />}
                                   </DropdownMenuItem>
                                 ))}
                              </DropdownMenuContent>

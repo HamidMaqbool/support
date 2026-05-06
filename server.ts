@@ -492,7 +492,12 @@ app.get('/api/admin/users', authenticateJWT, async (req: any, res) => {
 // Create Ticket API
 app.post('/api/tickets', authenticateJWT, async (req: any, res) => {
   const { subject, description, category, priority } = req.body;
-  const userId = req.user.id;
+  
+  // Ensure userId is a number if possible
+  let userId = req.user.id;
+  if (typeof userId === 'string' && /^\d+$/.test(userId)) {
+    userId = parseInt(userId);
+  }
   
   const db = await getDb();
   if (db) {
@@ -504,9 +509,14 @@ app.post('/api/tickets', authenticateJWT, async (req: any, res) => {
       const ticketId = result.insertId;
       io.emit('new-ticket', { id: ticketId, subject, userId });
       return res.json({ id: ticketId, userId, subject, description, category, priority: priority || 'medium', status: 'open' });
-    } catch (err) {
+    } catch (err: any) {
       console.error('Database create ticket error:', err);
-      return res.status(500).json({ message: 'Internal server error' });
+      return res.status(500).json({ 
+        message: 'Internal server error during ticket creation', 
+        error: err.message,
+        detail: err.code || 'UNKNOWN_ERROR',
+        payload: { userId, subject, category, priority } // Help debug production issues
+      });
     }
   }
   
@@ -626,8 +636,9 @@ app.post('/api/auth/login', async (req, res) => {
                   (email === 'user@example.com' && password === 'user123' && role === 'user');
 
   if (isValid) {
-    const token = jwt.sign({ email, role, id: role === 'admin' ? 'a1' : 'u1' }, JWT_SECRET, { expiresIn: '24h' });
-    res.json({ token, user: { email, role, id: role === 'admin' ? 'a1' : 'u1', name: role === 'admin' ? 'Support Admin' : 'Demo User' } });
+    const mockId = role === 'admin' ? 999999 : 888888;
+    const token = jwt.sign({ email, role, id: mockId }, JWT_SECRET, { expiresIn: '24h' });
+    res.json({ token, user: { email, role, id: mockId, name: role === 'admin' ? 'Support Admin' : 'Demo User' } });
   } else {
     res.status(401).json({ message: 'Invalid credentials' });
   }
@@ -641,8 +652,8 @@ app.get('/api/admin/canned-responses', authenticateJWT, (req, res) => {
 
 // Assign Ticket API
 app.patch('/api/tickets/:id/assign', authenticateJWT, async (req: any, res) => {
-  const isManager = req.user.role === 'admin' && (req.user.roles || []).includes('manager');
-  if (!isManager) return res.status(403).json({ message: 'Only managers can assign tickets' });
+  const isAdmin = req.user.role === 'admin';
+  if (!isAdmin) return res.status(403).json({ message: 'Only team members can assign tickets' });
   
   const { id } = req.params;
   const { assignedTo } = req.body;
@@ -882,14 +893,19 @@ io.on('connection', (socket) => {
           'INSERT INTO messages (ticketId, senderId, content, replyToId, isInternal, createdAt) VALUES (?, ?, ?, ?, ?, ?)',
           [message.ticketId, message.senderId, message.content, message.replyToId || null, message.isInternal || false, new Date(message.createdAt)]
         );
+        // We keep the original client ID as a secondary reference or update it
+        // To avoid duplication on the sender side, we should either:
+        // 1. Send back the original ID so the client can dedup
+        // 2. OR the client shouldn't add it optimistically.
+        // We will send back the original id in a property called 'tempId'
+        const originalId = message.id;
         message.id = result.insertId;
+        (message as any).tempId = originalId;
       } catch (err) {
         console.error('Failed to persist message via socket:', err);
       }
     }
     // Broadcast to the ticket room
-    // If it is an internal message, we should only broadcast to agents in that room
-    // For simplicity, we broadcast to everyone but the client filters out (though better to handle in socket rooms)
     io.to(message.ticketId.toString()).emit('message-received', message);
   });
 

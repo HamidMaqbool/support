@@ -118,7 +118,9 @@ export default function UserDashboard() {
         setIsNewTicketOpen(false);
         setNewTicket({ subject: '', category: 'Technical', message: '' });
       } else {
-        toast.error('Failed to create ticket');
+        const errorData = await res.json();
+        toast.error(`Failed to create ticket: ${errorData.message || 'Unknown error'}`);
+        if (errorData.error) console.error('Ticket creation error details:', errorData.error);
       }
     } catch (err) {
       console.error('Create ticket error:', err);
