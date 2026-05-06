@@ -583,25 +583,39 @@ app.get('/api/tickets/:id/messages', authenticateJWT, async (req: any, res) => {
   const db = await getDb();
   if (db) {
     try {
-      let query = 'SELECT * FROM messages WHERE ticketId = ?';
+      let query = `
+        SELECT m.*, u.name as senderName, u.role as senderRole 
+        FROM messages m
+        LEFT JOIN users u ON m.senderId = u.id
+        WHERE m.ticketId = ?
+      `;
       const params: any[] = [id];
 
       // Only staff can see internal messages
       if (req.user.role !== 'admin') {
-        query += ' AND isInternal = FALSE';
+        query += ' AND m.isInternal = FALSE';
       }
 
       if (before) {
-        query += ' AND createdAt < ?';
+        query += ' AND m.createdAt < ?';
         params.push(new Date(before));
       }
 
-      query += ' ORDER BY createdAt DESC LIMIT ?';
+      query += ' ORDER BY m.createdAt DESC LIMIT ?';
       params.push(limit);
 
       const [rows]: any = await db.query(query, params);
-      // Return in chronological order for the client
-      return res.json(rows.reverse());
+      // Format rows to include sender info in a nested object if preferred, 
+      // or just keep them flattened. Let's flatten for easy access in frontend.
+      return res.json(rows.reverse().map((r: any) => ({
+        ...r,
+        sender: r.senderId ? {
+          id: r.senderId,
+          name: r.senderName || (r.isSystem ? 'System' : 'Unknown User'),
+          role: r.senderRole,
+          avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${r.senderId}`
+        } : null
+      })));
     } catch (err) {
       console.error('Database list messages error:', err);
       return res.status(500).json({ message: 'Internal server error' });
@@ -711,7 +725,7 @@ app.patch('/api/tickets/:id/status', authenticateJWT, async (req: any, res) => {
   if (db) {
     try {
       await db.query('UPDATE tickets SET status = ? WHERE id = ?', [status, id]);
-      io.emit('ticket-status-updated', { id, status });
+      io.to(id.toString()).emit('ticket-status-updated', { id, status });
       return res.json({ message: `Ticket status updated to ${status}` });
     } catch (err) {
       console.error('Database status update error:', err);
@@ -738,7 +752,7 @@ app.post('/api/tickets/:id/feedback', authenticateJWT, async (req: any, res) => 
       }
 
       await db.query('UPDATE tickets SET rating = ?, feedback = ?, status = "resolved" WHERE id = ?', [rating, feedback, id]);
-      io.emit('ticket-status-updated', { id, status: 'resolved', rating, feedback });
+      io.to(id.toString()).emit('ticket-status-updated', { id, status: 'resolved', rating, feedback });
       return res.json({ message: 'Feedback submitted successfully. Ticket remains resolved.' });
     } catch (err) {
       console.error('Database feedback error:', err);
@@ -770,7 +784,7 @@ app.patch('/api/tickets/:id/reopen', authenticateJWT, async (req: any, res) => {
       }
 
       await db.query('UPDATE tickets SET status = "open", rating = NULL, feedback = NULL WHERE id = ?', [id]);
-      io.emit('ticket-status-updated', { id, status: 'open', rating: null, feedback: null });
+      io.to(id.toString()).emit('ticket-status-updated', { id, status: 'open', rating: null, feedback: null });
       return res.json({ message: 'Ticket reopened successfully' });
     } catch (err) {
       console.error('Database reopen error:', err);
@@ -897,11 +911,18 @@ io.on('connection', (socket) => {
           'INSERT INTO messages (ticketId, senderId, content, replyToId, isInternal, createdAt) VALUES (?, ?, ?, ?, ?, ?)',
           [message.ticketId, message.senderId, message.content, message.replyToId || null, message.isInternal || false, new Date(message.createdAt)]
         );
-        // We keep the original client ID as a secondary reference or update it
-        // To avoid duplication on the sender side, we should either:
-        // 1. Send back the original ID so the client can dedup
-        // 2. OR the client shouldn't add it optimistically.
-        // We will send back the original id in a property called 'tempId'
+        
+        // Fetch sender info for augmentation
+        const [userRows]: any = await db.query('SELECT name, role FROM users WHERE id = ?', [message.senderId]);
+        if (userRows.length > 0) {
+          message.sender = {
+            id: message.senderId,
+            name: userRows[0].name,
+            role: userRows[0].role,
+            avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${message.senderId}`
+          };
+        }
+
         const originalId = message.id;
         message.id = result.insertId;
         (message as any).tempId = originalId;

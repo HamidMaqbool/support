@@ -222,8 +222,13 @@ export default function TicketDetailView({ portal }: Props) {
     });
 
     socket.on('ticket-status-updated', ({ id: statusTicketId, status, rating, feedback }) => {
-      if (statusTicketId === id) {
-        setTicket(prev => prev ? { ...prev, status, rating: rating !== undefined ? rating : prev.rating, feedback: feedback !== undefined ? feedback : prev.feedback } : null);
+      if (String(statusTicketId) === String(id)) {
+        setTicket(prev => prev ? { 
+          ...prev, 
+          status, 
+          rating: rating !== undefined ? rating : prev.rating, 
+          feedback: feedback !== undefined ? feedback : prev.feedback 
+        } : null);
         if (status === 'resolved') playSound();
       }
     });
@@ -231,6 +236,18 @@ export default function TicketDetailView({ portal }: Props) {
     socket.on('ticket-updated', ({ id: updatedId, assignedTo }) => {
       if (updatedId === parseInt(id || '0') || updatedId === id) {
         setTicket(prev => prev ? { ...prev, assignedTo } : null);
+        
+        // Add a system message about assignment
+        const adminName = admins.find(a => a.id === assignedTo)?.name || 'An agent';
+        const systemMsg: Message = {
+          id: `sys-${Date.now()}`,
+          ticketId: id!,
+          senderId: 'system',
+          content: `Ticket has been assigned to ${adminName}`,
+          isSystem: true,
+          createdAt: new Date().toISOString()
+        };
+        setMessages(prev => [...prev, systemMsg]);
       }
     });
 
@@ -411,7 +428,7 @@ export default function TicketDetailView({ portal }: Props) {
 
   useEffect(() => {
     const fetchAdmins = async () => {
-      if (portal === 'admin' && token) {
+      if (token) {
         try {
           const res = await fetch('/api/admin/users?limit=100', {
             headers: { 'Authorization': `Bearer ${token}` }
@@ -426,7 +443,7 @@ export default function TicketDetailView({ portal }: Props) {
       }
     };
     fetchAdmins();
-  }, [portal, token]);
+  }, [token]);
 
   if (isLoading) {
     return (
@@ -798,7 +815,7 @@ export default function TicketDetailView({ portal }: Props) {
                 }
 
                 const isMe = (msg.senderId === user?.id);
-                const sender = MOCK_USERS.find(u => u.id === msg.senderId) || admins.find(a => a.id === msg.senderId);
+                const sender = msg.sender || MOCK_USERS.find(u => u.id === msg.senderId) || admins.find(a => a.id === msg.senderId);
                 const replyToId = msg.replyToId;
                 const replyMsg = messages.find(m => m.id === msg.replyToId);
                 const replyToContent = replyMsg?.content;
@@ -813,18 +830,18 @@ export default function TicketDetailView({ portal }: Props) {
                     className={`flex gap-4 group transition-all duration-500 rounded-3xl p-2 ${isMe ? 'flex-row-reverse' : ''}`}
                   >
                     <Avatar className="w-10 h-10 border-2 border-white shadow-sm ring-1 ring-slate-200 shrink-0 self-end mb-2">
-                      <AvatarImage src={sender?.avatar} />
-                      <AvatarFallback>{sender?.name ? sender.name[0] : '?'}</AvatarFallback>
+                      <AvatarImage src={sender?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${msg.senderId}`} />
+                      <AvatarFallback className="bg-slate-100 text-slate-500 font-bold">{sender?.name ? sender.name[0] : '?'}</AvatarFallback>
                     </Avatar>
                     <div className={`max-w-[75%] space-y-2 ${isMe ? 'text-right' : ''}`}>
                       <div className={`flex items-center gap-2 mb-1 ${isMe ? 'flex-row-reverse' : ''}`}>
                         <span className="text-xs font-bold text-slate-900">
                           {sender?.name}
-                          {(sender as any)?.roles && (sender as any).roles.length > 0 && (
+                          {sender?.roles && sender.roles.length > 0 ? (
                             <span className="ml-2 text-[8px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded-full font-black uppercase tracking-tighter align-middle">
-                              {(sender as any).roles.join(' / ')}
+                              {sender.roles.join(' / ')}
                             </span>
-                          )}
+                          ) : null}
                         </span>
                         <span className="text-[10px] text-slate-400 font-medium">{msg.createdAt ? format(new Date(msg.createdAt), 'h:mm a') : 'Now'}</span>
                         {msg.isInternal && (

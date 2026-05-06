@@ -47,7 +47,7 @@ import { Ticket } from '../../types';
 export default function UserDashboard() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { token } = useAuth();
+  const { user, token } = useAuth();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isNewTicketOpen, setIsNewTicketOpen] = useState(false);
