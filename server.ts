@@ -609,6 +609,8 @@ app.get('/api/tickets/:id/messages', authenticateJWT, async (req: any, res) => {
       // or just keep them flattened. Let's flatten for easy access in frontend.
       return res.json(rows.reverse().map((r: any) => ({
         ...r,
+        isSystem: !!r.isSystem,
+        isInternal: !!r.isInternal,
         sender: r.senderId ? {
           id: r.senderId,
           name: r.senderName || (r.isSystem ? 'System' : 'Unknown User'),

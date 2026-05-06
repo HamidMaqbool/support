@@ -714,10 +714,8 @@ export default function TicketDetailView({ portal }: Props) {
 
              {portal === 'admin' && (
                <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
-                 <DialogTrigger asChild>
-                   <Button variant="ghost" size="icon" className="rounded-lg h-9 w-9 text-slate-400 hover:text-red-600 hover:bg-red-50">
-                     <Trash2 size={18} />
-                   </Button>
+                 <DialogTrigger render={<Button variant="ghost" size="icon" className="rounded-lg h-9 w-9 text-slate-400 hover:text-red-600 hover:bg-red-50" />}>
+                   <Trash2 size={18} />
                  </DialogTrigger>
                   <DialogContent className="bg-white border-0 shadow-2xl rounded-[32px] sm:max-w-[420px] p-0 overflow-hidden">
                     <div className="bg-red-500 h-2 w-full" />
@@ -844,9 +842,9 @@ export default function TicketDetailView({ portal }: Props) {
                           ) : null}
                         </span>
                         <span className="text-[10px] text-slate-400 font-medium">{msg.createdAt ? format(new Date(msg.createdAt), 'h:mm a') : 'Now'}</span>
-                        {msg.isInternal && (
+                        {!!msg.isInternal ? (
                           <span className="text-[8px] bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded font-black uppercase tracking-tighter">Internal Note</span>
-                        )}
+                        ) : null}
                       </div>
                       
                       <div className="relative">
@@ -870,7 +868,7 @@ export default function TicketDetailView({ portal }: Props) {
                             : (msg.isInternal ? 'bg-yellow-50 text-slate-900 border-2 border-yellow-200 shadow-sm' : 'bg-white text-slate-700 border border-slate-200 shadow-sm rounded-tl-none')
                         }`}>
                           {msg.content}
-                          {msg.attachments && msg.attachments.length > 0 && (
+                          {msg.attachments && msg.attachments.length > 0 ? (
                             <div className="mt-3 flex flex-wrap gap-2">
                                {msg.attachments.map((file, idx) => {
                                  const isImage = typeof file === 'string' && /\.(jpg|jpeg|png|gif|webp)$/i.test(file);
@@ -893,7 +891,7 @@ export default function TicketDetailView({ portal }: Props) {
                                  );
                                })}
                             </div>
-                          )}
+                          ) : null}
                         </div>
                         <button 
                           onClick={() => setReplyingTo(msg)}
@@ -1037,7 +1035,7 @@ export default function TicketDetailView({ portal }: Props) {
                  </motion.div>
                )}
   
-               {attachments.length > 0 && (
+               {attachments.length > 0 ? (
                   <div className="flex flex-wrap gap-2">
                      {attachments.map((file, idx) => (
                        <div key={idx} className="bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-2 border border-blue-100">
@@ -1047,7 +1045,7 @@ export default function TicketDetailView({ portal }: Props) {
                        </div>
                      ))}
                   </div>
-               )}
+               ) : null}
 
                {uploading && (
                  <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden mb-2">
@@ -1220,9 +1218,11 @@ export default function TicketDetailView({ portal }: Props) {
                            <span className="text-xs text-slate-500 flex items-center gap-2"><CheckCircle2 size={12} /> Status</span>
                            <Badge variant="outline" className={`text-[10px] font-bold uppercase transition-colors ${
                              ticket.status === 'open' ? 'bg-blue-50 text-blue-600 border-blue-100' : 
+                             ticket.status === 'pending' ? 'bg-yellow-50 text-yellow-600 border-yellow-100' :
+                             (ticket.status === 'resolved' && ticket.rating === null && portal === 'user') ? 'bg-orange-50 text-orange-600 border-orange-100' :
                              ticket.status === 'resolved' ? 'bg-green-50 text-green-600 border-green-100' : 'bg-slate-50 text-slate-500'
                            }`}>
-                             {ticket.status}
+                             {ticket.status === 'resolved' && ticket.rating === null && portal === 'user' ? 'feedback pending' : ticket.status}
                            </Badge>
                         </div>
                         <div className="flex items-center justify-between">
@@ -1243,7 +1243,7 @@ export default function TicketDetailView({ portal }: Props) {
                               (ticket.assignedTo === user?.id ? 'Me' : 'Unassigned')}
                            </span>
                         </div>
-                        {ticketTags.length > 0 && (
+                        {ticketTags.length > 0 ? (
                           <div className="pt-2 flex flex-wrap gap-1.5">
                             {ticketTags.map(tag => (
                               <Badge key={tag.id} className="bg-slate-100 text-slate-600 border-none text-[10px] uppercase font-bold py-0.5 px-2">
@@ -1251,7 +1251,7 @@ export default function TicketDetailView({ portal }: Props) {
                               </Badge>
                             ))}
                           </div>
-                        )}
+                        ) : null}
                      </div>
                    </section>
     
@@ -1260,10 +1260,10 @@ export default function TicketDetailView({ portal }: Props) {
                         <h4 className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-4">Internal Controls</h4>
                         <div className="grid grid-cols-2 gap-2">
                            <DropdownMenu>
-                             <DropdownMenuTrigger asChild>
-                               <Button variant="outline" size="sm" className="w-full text-[10px] font-bold tracking-tight rounded-lg h-9 border-slate-200" disabled={isAssigning}>
-                                  {isAssigning ? 'Assigning...' : (ticket.assignedTo ? 'Change Agent' : 'Assign Ticket')}
-                               </Button>
+                             <DropdownMenuTrigger render={
+                               <Button variant="outline" size="sm" className="w-full text-[10px] font-bold tracking-tight rounded-lg h-9 border-slate-200" disabled={isAssigning} />
+                             }>
+                                {isAssigning ? 'Assigning...' : (ticket.assignedTo ? 'Change Agent' : 'Assign Ticket')}
                              </DropdownMenuTrigger>
                              <DropdownMenuContent align="end" className="w-[200px] rounded-xl p-1 bg-white shadow-xl border border-slate-200">
                                 <div className="px-2 py-1.5 text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-50 mb-1">

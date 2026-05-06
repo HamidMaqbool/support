@@ -42,6 +42,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { useAuth } from '../../lib/AuthContext';
+import { getSocket } from '../../lib/socket';
 import { Ticket } from '../../types';
 
 export default function UserDashboard() {
@@ -52,7 +53,36 @@ export default function UserDashboard() {
   const [searchTerm, setSearchTerm] = useState('');
   const [isNewTicketOpen, setIsNewTicketOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [admins, setAdmins] = useState<any[]>([]);
   const [newTicket, setNewTicket] = useState({ subject: '', category: 'Technical', message: '' });
+
+  useEffect(() => {
+    const socket = getSocket();
+    
+    const handleTicketStatusUpdate = ({ id: updatedId, status, rating }: any) => {
+      setTickets(prev => prev.map(t => 
+        t.id === parseInt(updatedId) || t.id === updatedId 
+          ? { ...t, status, rating } 
+          : t
+      ));
+    };
+
+    const handleTicketUpdate = ({ id: updatedId, assignedTo }: any) => {
+      setTickets(prev => prev.map(t => 
+        t.id === parseInt(updatedId) || t.id === updatedId 
+          ? { ...t, assignedTo } 
+          : t
+      ));
+    };
+
+    socket.on('ticket-status-updated', handleTicketStatusUpdate);
+    socket.on('ticket-updated', handleTicketUpdate);
+
+    return () => {
+      socket.off('ticket-status-updated', handleTicketStatusUpdate);
+      socket.off('ticket-updated', handleTicketUpdate);
+    };
+  }, []);
 
   useEffect(() => {
     if (location.state?.openNewTicket) {
@@ -64,7 +94,22 @@ export default function UserDashboard() {
 
   useEffect(() => {
     fetchTickets();
+    fetchAdmins();
   }, [token]);
+
+  const fetchAdmins = async () => {
+    try {
+      const res = await fetch('/api/admin/users?limit=100', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAdmins(data.users.filter((u: any) => u.role === 'admin'));
+      }
+    } catch (err) {
+      console.error('Failed to fetch admins:', err);
+    }
+  };
 
   const fetchTickets = async () => {
     setIsLoading(true);
@@ -84,13 +129,17 @@ export default function UserDashboard() {
     }
   };
 
-  const getStatusColor = (status: string) => {
+  const getStatusInfo = (ticket: Ticket) => {
+    const isFeedbackPending = ticket.status === 'resolved' && ticket.rating === null;
+    const status = isFeedbackPending ? 'feedback pending' : ticket.status;
+
     switch (status) {
-      case 'open': return 'bg-blue-100 text-blue-700 border-blue-200';
-      case 'pending': return 'bg-yellow-100 text-yellow-700 border-yellow-200';
-      case 'resolved': return 'bg-green-100 text-green-700 border-green-200';
-      case 'closed': return 'bg-slate-100 text-slate-700 border-slate-200';
-      default: return 'bg-slate-100 text-slate-700';
+      case 'open': return { label: 'Open', color: 'bg-blue-100 text-blue-700 border-blue-200' };
+      case 'pending': return { label: 'Pending', color: 'bg-yellow-100 text-yellow-700 border-yellow-200' };
+      case 'resolved': return { label: 'Resolved', color: 'bg-green-100 text-green-700 border-green-200' };
+      case 'feedback pending': return { label: 'Feedback Pending', color: 'bg-orange-100 text-orange-700 border-orange-200' };
+      case 'closed': return { label: 'Closed', color: 'bg-slate-100 text-slate-700 border-slate-200' };
+      default: return { label: status, color: 'bg-slate-100 text-slate-700' };
     }
   };
 
@@ -163,14 +212,14 @@ export default function UserDashboard() {
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="sm" className="text-slate-500 hover:text-slate-900 hidden sm:flex">Documentation</Button>
           <DropdownMenu>
-            <DropdownMenuTrigger asChild>
+            <DropdownMenuTrigger render={
               <Avatar className="w-8 h-8 cursor-pointer hover:ring-2 hover:ring-primary/20 transition-all border border-slate-200">
                 <AvatarImage src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.id}`} />
                 <AvatarFallback className="bg-slate-100 text-slate-500 text-[10px] font-bold">
                   {user?.name?.[0] || 'U'}
                 </AvatarFallback>
               </Avatar>
-            </DropdownMenuTrigger>
+            } />
             <DropdownMenuContent align="end" className="w-56 mt-2 rounded-xl bg-white shadow-xl border-slate-100">
               <div className="p-3 border-b border-slate-100 mb-1">
                 <p className="text-sm font-bold text-slate-900">{user?.name}</p>
@@ -261,8 +310,8 @@ export default function UserDashboard() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-10">
           {[
             { label: 'Active Tickets', value: activeCount, icon: Clock, color: 'text-blue-600', bg: 'bg-blue-50' },
-            { label: 'Pending Response', value: pendingCount, icon: AlertCircle, color: 'text-orange-600', bg: 'bg-orange-50' },
-            { label: 'Resolved', value: resolvedCount, icon: CheckCircle2, color: 'text-green-600', bg: 'bg-green-50' }
+            { label: 'Feedback Pending', value: tickets.filter(t => t.status === 'resolved' && t.rating === null).length, icon: AlertCircle, color: 'text-orange-600', bg: 'bg-orange-50' },
+            { label: 'Completed', value: tickets.filter(t => t.status === 'closed' || (t.status === 'resolved' && t.rating !== null)).length, icon: CheckCircle2, color: 'text-green-600', bg: 'bg-green-50' }
           ].map((stat, i) => (
             <motion.div 
               key={i}
@@ -307,42 +356,57 @@ export default function UserDashboard() {
            ) : null}
            <div className="bg-slate-50 px-6 py-3 grid grid-cols-12 gap-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-200">
               <div className="col-span-2">Ticket ID</div>
-              <div className="col-span-5">Subject</div>
+              <div className="col-span-4">Subject</div>
               <div className="col-span-2">Status</div>
+              <div className="col-span-2">Assignee</div>
               <div className="col-span-2">Last Update</div>
-              <div className="col-span-1"></div>
            </div>
            <div className="divide-y divide-slate-100">
-              {filteredTickets.map((ticket, i) => (
-                <motion.div 
-                  key={ticket.id}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: 0.1 + (i * 0.05) }}
-                  onClick={() => navigate(`/user/ticket/${ticket.id}`)}
-                  className="px-6 py-5 grid grid-cols-12 gap-4 items-center hover:bg-slate-50 transition-colors cursor-pointer group"
-                >
-                  <div className="col-span-2 font-mono text-sm text-slate-500">#{ticket.id}</div>
-                  <div className="col-span-5">
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-slate-900">{ticket.subject}</span>
-                      {getPriorityIcon(ticket.priority)}
+              {filteredTickets.map((ticket, i) => {
+                const statusInfo = getStatusInfo(ticket);
+                const assignee = admins.find(a => a.id === ticket.assignedTo);
+                return (
+                  <motion.div 
+                    key={ticket.id}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.1 + (i * 0.05) }}
+                    onClick={() => navigate(`/user/ticket/${ticket.id}`)}
+                    className="px-6 py-5 grid grid-cols-12 gap-4 items-center hover:bg-slate-50 transition-colors cursor-pointer group"
+                  >
+                    <div className="col-span-2 font-mono text-sm text-slate-500">#{ticket.id}</div>
+                    <div className="col-span-4">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-slate-900">{ticket.subject}</span>
+                        {getPriorityIcon(ticket.priority)}
+                      </div>
+                      <p className="text-xs text-slate-400 mt-0.5 truncate">{ticket.category}</p>
                     </div>
-                    <p className="text-xs text-slate-400 mt-0.5 truncate">{ticket.category}</p>
-                  </div>
-                  <div className="col-span-2">
-                    <Badge variant="outline" className={`${getStatusColor(ticket.status)} capitalize border px-2 py-0.5 text-[10px] font-bold`}>
-                      {ticket.status}
-                    </Badge>
-                  </div>
-                  <div className="col-span-2 text-xs text-slate-500">
-                    {ticket.createdAt ? format(new Date(ticket.createdAt), 'MMM d, h:mm a') : 'N/A'}
-                  </div>
-                  <div className="col-span-1 flex justify-end">
-                    <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-slate-600 transition-colors" />
-                  </div>
-                </motion.div>
-              ))}
+                    <div className="col-span-2">
+                      <Badge variant="outline" className={`${statusInfo.color} capitalize border px-2 py-0.5 text-[10px] font-bold whitespace-nowrap`}>
+                        {statusInfo.label}
+                      </Badge>
+                    </div>
+                    <div className="col-span-2 flex items-center gap-2">
+                      {assignee ? (
+                        <>
+                          <Avatar className="w-5 h-5 shadow-sm border border-slate-200">
+                            <AvatarImage src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${assignee.id}`} />
+                            <AvatarFallback className="text-[8px] bg-slate-100">{assignee.name?.[0]}</AvatarFallback>
+                          </Avatar>
+                          <span className="text-xs text-slate-600 truncate">{assignee.name}</span>
+                        </>
+                      ) : (
+                        <span className="text-xs text-slate-400 font-medium italic">Unassigned</span>
+                      )}
+                    </div>
+                    <div className="col-span-2 text-xs text-slate-500 flex items-center justify-between pr-2">
+                      <span>{ticket.createdAt ? format(new Date(ticket.createdAt), 'MMM d, h:mm a') : 'N/A'}</span>
+                      <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-600 transition-colors" />
+                    </div>
+                  </motion.div>
+                );
+              })}
            </div>
         </div>
         

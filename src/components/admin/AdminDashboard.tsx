@@ -79,8 +79,30 @@ export default function AdminDashboard() {
       playSound();
       fetchTickets();
     });
+
+    const handleTicketStatusUpdate = ({ id: updatedId, status, rating }: any) => {
+      setTickets(prev => prev.map(t => 
+        t.id === parseInt(updatedId) || t.id === updatedId 
+          ? { ...t, status, rating } 
+          : t
+      ));
+    };
+
+    const handleTicketUpdate = ({ id: updatedId, assignedTo }: any) => {
+      setTickets(prev => prev.map(t => 
+        t.id === parseInt(updatedId) || t.id === updatedId 
+          ? { ...t, assignedTo } 
+          : t
+      ));
+    };
+
+    socket.on('ticket-status-updated', handleTicketStatusUpdate);
+    socket.on('ticket-updated', handleTicketUpdate);
+
     return () => {
       socket.off('new-ticket');
+      socket.off('ticket-status-updated', handleTicketStatusUpdate);
+      socket.off('ticket-updated', handleTicketUpdate);
     };
   }, []);
 
@@ -440,12 +462,13 @@ export default function AdminDashboard() {
                                 </div>
                                 <div onClick={() => navigate(`/admin/ticket/${ticket.id}`)}>
                                    <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Status</p>
-                                   <div className={`text-[10px] font-bold px-2 py-0.5 rounded-md border uppercase tracking-wider ${
+                                   <div className={`text-[10px] font-bold px-2 py-0.5 rounded-md border uppercase tracking-wider whitespace-nowrap ${
                                      ticket.status === 'open' ? 'bg-blue-50 text-blue-600 border-blue-100' : 
                                      ticket.status === 'pending' ? 'bg-yellow-50 text-yellow-600 border-yellow-100' :
+                                     (ticket.status === 'resolved' && (ticket as any).rating === null) ? 'bg-orange-50 text-orange-600 border-orange-100' :
                                      'bg-green-50 text-green-600 border-green-100'
                                    }`}>
-                                     {ticket.status}
+                                     {ticket.status === 'resolved' && (ticket as any).rating === null ? 'feedback pending' : ticket.status}
                                    </div>
                                 </div>
                                 <div className="flex items-center gap-2">
