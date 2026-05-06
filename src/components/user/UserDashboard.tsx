@@ -16,10 +16,18 @@ import {
   ChevronRight,
   Send,
   X,
-  Loader2
+  Loader2,
+  LogOut
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { 
+  DropdownMenu, 
+  DropdownMenuContent, 
+  DropdownMenuItem, 
+  DropdownMenuTrigger 
+} from '@/components/ui/dropdown-menu';
 import { 
   Dialog, 
   DialogContent, 
@@ -130,7 +138,7 @@ export default function UserDashboard() {
 
   const filteredTickets = tickets.filter(t => 
     t.subject.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    t.id.toLowerCase().includes(searchTerm.toLowerCase())
+    t.id.toString().includes(searchTerm.toLowerCase())
   );
 
   const activeCount = tickets.filter(t => t.status === 'open' || t.status === 'pending').length;
@@ -153,8 +161,29 @@ export default function UserDashboard() {
           <span className="text-sm font-medium text-slate-600">Customer Support Area</span>
         </div>
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="sm" className="text-slate-500 hover:text-slate-900">Documentation</Button>
-          <div className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 cursor-pointer hover:border-slate-400 transition-colors" />
+          <Button variant="ghost" size="sm" className="text-slate-500 hover:text-slate-900 hidden sm:flex">Documentation</Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Avatar className="w-8 h-8 cursor-pointer hover:ring-2 hover:ring-primary/20 transition-all border border-slate-200">
+                <AvatarImage src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.id}`} />
+                <AvatarFallback className="bg-slate-100 text-slate-500 text-[10px] font-bold">
+                  {user?.name?.[0] || 'U'}
+                </AvatarFallback>
+              </Avatar>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56 mt-2 rounded-xl bg-white shadow-xl border-slate-100">
+              <div className="p-3 border-b border-slate-100 mb-1">
+                <p className="text-sm font-bold text-slate-900">{user?.name}</p>
+                <p className="text-xs text-slate-500 truncate">{user?.email}</p>
+              </div>
+              <DropdownMenuItem onClick={() => navigate('/portal')} className="rounded-lg h-9 gap-2">
+                User Portal
+              </DropdownMenuItem>
+              <DropdownMenuItem className="text-red-600 hover:bg-red-50 rounded-lg h-9 gap-2">
+                <LogOut size={14} /> Sign Out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </nav>
 

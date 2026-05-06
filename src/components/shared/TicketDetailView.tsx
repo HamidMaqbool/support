@@ -228,10 +228,17 @@ export default function TicketDetailView({ portal }: Props) {
       }
     });
 
+    socket.on('ticket-updated', ({ id: updatedId, assignedTo }) => {
+      if (updatedId === parseInt(id || '0') || updatedId === id) {
+        setTicket(prev => prev ? { ...prev, assignedTo } : null);
+      }
+    });
+
     return () => {
       socket.off('message-received');
       socket.off('user-typing');
       socket.off('ticket-status-updated');
+      socket.off('ticket-updated');
     };
   }, [id, socket, user?.id]);
 
@@ -678,9 +685,9 @@ export default function TicketDetailView({ portal }: Props) {
                  <span className="text-xs font-bold text-slate-400 font-mono tracking-tighter">#{id}</span>
                  <h1 className="text-sm font-bold text-slate-900 truncate">{ticket.subject}</h1>
                </div>
-               <p className="text-[10px] text-slate-500 flex items-center gap-1">
-                 <Clock size={10} /> Opened {ticket.createdAt ? format(new Date(ticket.createdAt), 'PPp') : 'Recently'}
-               </p>
+                 <p className="text-[10px] text-slate-500 flex items-center gap-1">
+                   <Clock size={10} /> {ticket.createdAt ? format(new Date(ticket.createdAt), 'PPp') : 'Recently'}
+                 </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -753,7 +760,7 @@ export default function TicketDetailView({ portal }: Props) {
             <div className="flex gap-4">
                <Avatar className="w-10 h-10 border-2 border-white shadow-sm ring-1 ring-slate-200">
                  <AvatarImage src={requestor.avatar} />
-                 <AvatarFallback>U</AvatarFallback>
+                 <AvatarFallback className="bg-slate-100 text-slate-500 font-bold">{requestor.name[0]}</AvatarFallback>
                </Avatar>
                <div className="flex-1">
                  <div className="flex items-center gap-2 mb-1.5">
