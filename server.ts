@@ -25,6 +25,7 @@ const io = new Server(httpServer, {
 
 const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-key';
+console.log('JWT Secret status:', process.env.JWT_SECRET ? 'Using environment variable' : 'Using default fallback');
 
 // --- Multer Configuration ---
 const storage = multer.diskStorage({
@@ -287,15 +288,18 @@ const authenticateJWT = (req: any, res: any, next: any) => {
   const authHeader = req.headers.authorization;
   if (authHeader && typeof authHeader === 'string') {
     const parts = authHeader.split(' ');
-    if (parts.length < 2) return res.sendStatus(401);
+    if (parts.length < 2) return res.status(401).json({ message: 'Missing token' });
     const token = parts[1];
     jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
-      if (err) return res.sendStatus(403);
+      if (err) {
+        console.error('JWT Verification Error:', err.message);
+        return res.status(403).json({ message: 'Session expired or invalid token', error: err.message });
+      }
       req.user = user;
       next();
     });
   } else {
-    res.sendStatus(401);
+    res.status(401).json({ message: 'No authorization header provided' });
   }
 };
 
@@ -360,7 +364,7 @@ app.get('/api/tags', authenticateJWT, async (req: any, res) => {
 });
 
 app.post('/api/tickets/:id/tags', authenticateJWT, async (req: any, res) => {
-  if (req.user.role !== 'admin') return res.sendStatus(403);
+  if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
   const { id } = req.params;
   const { tagName, color } = req.body;
   
@@ -406,7 +410,7 @@ app.get('/api/tickets/:id/tags', authenticateJWT, async (req: any, res) => {
 
 // Secure Login API
 app.post('/api/auth/secure-link', authenticateJWT, async (req: any, res) => {
-  if (req.user.role !== 'admin') return res.sendStatus(403);
+  if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
   const { userId } = req.body;
   
   const token = crypto.randomBytes(32).toString('hex');
@@ -453,7 +457,7 @@ app.post('/api/auth/login-secure', async (req, res) => {
 
 // User Management API
 app.get('/api/admin/users', authenticateJWT, async (req: any, res) => {
-  if (req.user.role !== 'admin') return res.sendStatus(403);
+  if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
   
   const page = parseInt(req.query.page as string) || 1;
   const limit = parseInt(req.query.limit as string) || 10;
@@ -559,7 +563,7 @@ app.get('/api/tickets/:id', authenticateJWT, async (req: any, res) => {
       
       const ticket = rows[0];
       if (req.user.role === 'user' && ticket.userId !== req.user.id) {
-        return res.sendStatus(403);
+        return res.status(403).json({ message: 'You do not have permission to view this ticket' });
       }
       
       return res.json(ticket);
@@ -698,7 +702,7 @@ app.patch('/api/tickets/:id/assign', authenticateJWT, async (req: any, res) => {
 
 // Update Ticket Status API
 app.patch('/api/tickets/:id/status', authenticateJWT, async (req: any, res) => {
-  if (req.user.role !== 'admin') return res.sendStatus(403);
+  if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
   
   const { id } = req.params;
   const { status } = req.body;
@@ -778,7 +782,7 @@ app.patch('/api/tickets/:id/reopen', authenticateJWT, async (req: any, res) => {
 
 // Delete Ticket API (with file cleanup)
 app.delete('/api/tickets/:id', authenticateJWT, async (req: any, res) => {
-  if (req.user.role !== 'admin') return res.sendStatus(403);
+  if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
   const { id } = req.params;
 
   const db = await getDb();
@@ -820,7 +824,7 @@ app.delete('/api/tickets/:id', authenticateJWT, async (req: any, res) => {
 
 // Feedback Statistics API
 app.get('/api/admin/feedback-stats', authenticateJWT, async (req: any, res) => {
-  if (req.user.role !== 'admin') return res.sendStatus(403);
+  if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
   
   const page = parseInt(req.query.page as string) || 1;
   const limit = parseInt(req.query.limit as string) || 5;

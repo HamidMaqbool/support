@@ -196,8 +196,19 @@ export default function TicketDetailView({ portal }: Props) {
     socket.on('message-received', (msg: Message) => {
       if (msg.ticketId === id) {
         setMessages(prev => {
-          // Robust deduplication: check real ID and temporary ID
-          if (prev.find(m => m.id === msg.id || (msg as any).tempId === m.id)) return prev;
+          // Check if we already have this message (by real ID or temp optimistic ID)
+          const existingIndex = prev.findIndex(m => 
+            m.id === msg.id || 
+            ((msg as any).tempId && m.id === (msg as any).tempId)
+          );
+
+          if (existingIndex !== -1) {
+            // Replace optimistic/existing message with the one from server
+            const newMessages = [...prev];
+            newMessages[existingIndex] = msg;
+            return newMessages;
+          }
+
           if (msg.senderId !== user?.id) playSound();
           return [...prev, msg];
         });
