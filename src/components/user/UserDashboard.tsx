@@ -47,13 +47,16 @@ import { Ticket } from '../../types';
 export default function UserDashboard() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, token } = useAuth();
+  const { user: authUser, token, logout } = useAuth();
   const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [userProfile, setUserProfile] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [isNewTicketOpen, setIsNewTicketOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [admins, setAdmins] = useState<any[]>([]);
   const [newTicket, setNewTicket] = useState({ subject: '', category: 'Technical', message: '' });
+  const [profileData, setProfileData] = useState({ name: '', avatar: '' });
   const [attachments, setAttachments] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -95,9 +98,49 @@ export default function UserDashboard() {
   }, [location.state, navigate, location.pathname]);
 
   useEffect(() => {
+    fetchProfile();
     fetchTickets();
-    fetchAdmins();
   }, [token]);
+
+  const fetchProfile = async () => {
+    try {
+      const res = await fetch('/api/me', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUserProfile(data);
+        setProfileData({ 
+          name: data.name || '', 
+          avatar: data.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.id}` 
+        });
+      }
+    } catch (err) {
+      console.error('Fetch profile error:', err);
+    }
+  };
+
+  const handleUpdateProfile = async (e: FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('/api/me', {
+        method: 'PATCH',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}` 
+        },
+        body: JSON.stringify(profileData)
+      });
+      if (res.ok) {
+        toast.success('Profile updated successfully');
+        setIsProfileOpen(false);
+        fetchProfile();
+      }
+    } catch (err) {
+      console.error('Update profile error:', err);
+      toast.error('Failed to update profile');
+    }
+  };
 
   const fetchAdmins = async () => {
     try {
@@ -251,21 +294,29 @@ export default function UserDashboard() {
           <DropdownMenu>
             <DropdownMenuTrigger render={
               <Avatar className="w-8 h-8 cursor-pointer hover:ring-2 hover:ring-primary/20 transition-all border border-slate-200">
-                <AvatarImage src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.id}`} />
+                <AvatarImage src={userProfile?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${authUser?.id}`} />
                 <AvatarFallback className="bg-slate-100 text-slate-500 text-[10px] font-bold">
-                  {user?.name?.[0] || 'U'}
+                  {userProfile?.name?.[0] || authUser?.name?.[0] || 'U'}
                 </AvatarFallback>
               </Avatar>
             } />
             <DropdownMenuContent align="end" className="w-56 mt-2 rounded-xl bg-white shadow-xl border-slate-100">
               <div className="p-3 border-b border-slate-100 mb-1">
-                <p className="text-sm font-bold text-slate-900">{user?.name}</p>
-                <p className="text-xs text-slate-500 truncate">{user?.email}</p>
+                <p className="text-sm font-bold text-slate-900">{userProfile?.name || authUser?.name}</p>
+                <p className="text-xs text-slate-500 truncate">{authUser?.email}</p>
+                {userProfile?.appName && (
+                  <Badge variant="outline" className="mt-1 text-[8px] font-bold uppercase bg-primary/5 text-primary border-primary/10">
+                    Via {userProfile.appName}
+                  </Badge>
+                )}
               </div>
+              <DropdownMenuItem onClick={() => setIsProfileOpen(true)} className="rounded-lg h-9 gap-2">
+                My Profile
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => navigate('/portal')} className="rounded-lg h-9 gap-2">
                 User Portal
               </DropdownMenuItem>
-              <DropdownMenuItem className="text-red-600 hover:bg-red-50 rounded-lg h-9 gap-2">
+              <DropdownMenuItem onClick={logout} className="text-red-600 hover:bg-red-50 rounded-lg h-9 gap-2">
                 <LogOut size={14} /> Sign Out
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -274,13 +325,83 @@ export default function UserDashboard() {
       </nav>
 
       <main className="max-w-6xl mx-auto px-6 py-10">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
           <div>
             <h1 className="text-3xl font-bold text-slate-900 mb-2">My Requests</h1>
-            <p className="text-slate-500 text-sm">Track your support tickets and get updates in real-time.</p>
+            <div className="flex items-center gap-3">
+              <p className="text-slate-500 text-sm">Track your support tickets and get updates in real-time.</p>
+              {userProfile?.appName && (
+                <div className="flex items-center gap-1.5 px-3 py-1 bg-slate-100 rounded-full border border-slate-200">
+                  <div className="w-1.5 h-1.5 rounded-full bg-primary" />
+                  <span className="text-[10px] font-bold text-slate-600 uppercase tracking-tight">Connected via {userProfile.appName}</span>
+                </div>
+              )}
+            </div>
           </div>
           
-          <Dialog open={isNewTicketOpen} onOpenChange={setIsNewTicketOpen}>
+        {/* Profile Dialog */}
+        <Dialog open={isProfileOpen} onOpenChange={setIsProfileOpen}>
+          <DialogContent className="sm:max-w-md bg-white border-0 shadow-2xl rounded-[32px]">
+            <DialogHeader>
+              <DialogTitle className="text-2xl font-bold">Manage Profile</DialogTitle>
+              <DialogDescription className="text-slate-500">
+                Update your personal information and profile picture.
+              </DialogDescription>
+            </DialogHeader>
+            <form onSubmit={handleUpdateProfile} className="space-y-6 py-4">
+              <div className="flex flex-col items-center gap-4 mb-6">
+                <Avatar className="w-24 h-24 border-4 border-slate-50 shadow-xl">
+                  <AvatarImage src={profileData.avatar} />
+                  <AvatarFallback className="text-2xl bg-slate-100 font-bold">{profileData.name?.[0]}</AvatarFallback>
+                </Avatar>
+                <div className="space-y-1 text-center">
+                  <p className="text-xs font-bold uppercase text-slate-400">Profile Image URL</p>
+                  <Input 
+                    value={profileData.avatar} 
+                    onChange={(e) => setProfileData({...profileData, avatar: e.target.value})}
+                    placeholder="https://example.com/image.jpg"
+                    className="h-10 text-xs rounded-xl bg-slate-50 border-0 text-center w-64"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label className="text-xs font-bold uppercase tracking-wider text-slate-400">Full Name</Label>
+                  <Input 
+                    required 
+                    className="h-12 rounded-xl bg-slate-50 border-0 focus-visible:ring-2 focus-visible:ring-primary/20"
+                    value={profileData.name}
+                    onChange={(e) => setProfileData({...profileData, name: e.target.value})}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs font-bold uppercase tracking-wider text-slate-400">Email Address (Read-only)</Label>
+                  <Input 
+                    disabled
+                    className="h-12 rounded-xl bg-slate-50 border-0 text-slate-400 cursor-not-allowed"
+                    value={authUser?.email || ''}
+                  />
+                </div>
+                {userProfile?.appName && (
+                  <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Associated Application</p>
+                    <p className="text-sm font-bold text-slate-700">{userProfile.appName}</p>
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter>
+                <Button type="button" variant="ghost" onClick={() => setIsProfileOpen(false)} className="rounded-xl h-12">Cancel</Button>
+                <Button type="submit" className="bg-slate-900 hover:bg-slate-800 text-white rounded-xl px-8 h-12">
+                  Save Changes
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={isNewTicketOpen} onOpenChange={setIsNewTicketOpen}>
             <DialogTrigger 
               render={
                 <Button className="h-12 px-6 rounded-xl bg-slate-900 hover:bg-slate-800 gap-2 items-center shadow-lg shadow-slate-900/10">
@@ -432,67 +553,71 @@ export default function UserDashboard() {
         </div>
 
         {/* Ticket List Table-ish */}
-        <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm min-h-[200px] bg-white relative">
-           {isLoading ? (
-             <div className="absolute inset-0 flex items-center justify-center bg-white/50 z-10">
-               <Loader2 className="w-8 h-8 text-primary animate-spin" />
+        {filteredTickets.length > 0 && (
+          <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm min-h-[200px] bg-white relative">
+             {isLoading ? (
+               <div className="absolute inset-0 flex items-center justify-center bg-white/50 z-10">
+                 <Loader2 className="w-8 h-8 text-primary animate-spin" />
+               </div>
+             ) : null}
+             <div className="bg-slate-50 px-6 py-3 grid grid-cols-12 gap-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-200">
+                <div className="col-span-2">Ticket ID</div>
+                <div className="col-span-4">Subject</div>
+                <div className="col-span-2">Status</div>
+                <div className="col-span-2">Assignee</div>
+                <div className="col-span-2">Last Update</div>
              </div>
-           ) : null}
-           <div className="bg-slate-50 px-6 py-3 grid grid-cols-12 gap-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-200">
-              <div className="col-span-2">Ticket ID</div>
-              <div className="col-span-4">Subject</div>
-              <div className="col-span-2">Status</div>
-              <div className="col-span-2">Assignee</div>
-              <div className="col-span-2">Last Update</div>
-           </div>
-           <div className="divide-y divide-slate-100">
-              {filteredTickets.map((ticket, i) => {
-                const statusInfo = getStatusInfo(ticket);
-                const assignee = admins.find(a => a.id === ticket.assignedTo);
-                return (
-                  <motion.div 
-                    key={ticket.id}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: 0.1 + (i * 0.05) }}
-                    onClick={() => navigate(`/user/ticket/${ticket.id}`)}
-                    className="px-6 py-5 grid grid-cols-12 gap-4 items-center hover:bg-slate-50 transition-colors cursor-pointer group"
-                  >
-                    <div className="col-span-2 font-mono text-sm text-slate-500">#{ticket.id}</div>
-                    <div className="col-span-4">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-slate-900">{ticket.subject}</span>
-                        {getPriorityIcon(ticket.priority)}
+             <div className="divide-y divide-slate-100">
+                {filteredTickets.map((ticket, i) => {
+                  const statusInfo = getStatusInfo(ticket);
+                  return (
+                    <motion.div 
+                      key={ticket.id}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: 0.1 + (i * 0.05) }}
+                      onClick={() => navigate(`/user/ticket/${ticket.id}`)}
+                      className="px-6 py-5 grid grid-cols-12 gap-4 items-center hover:bg-slate-50 transition-colors cursor-pointer group"
+                    >
+                      <div className="col-span-2 font-mono text-sm text-slate-500">#{ticket.id}</div>
+                      <div className="col-span-4">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-slate-900">{ticket.subject}</span>
+                          {getPriorityIcon(ticket.priority)}
+                        </div>
+                        <p className="text-xs text-slate-400 mt-0.5 truncate">{ticket.category}</p>
                       </div>
-                      <p className="text-xs text-slate-400 mt-0.5 truncate">{ticket.category}</p>
-                    </div>
-                    <div className="col-span-2">
-                      <Badge variant="outline" className={`${statusInfo.color} capitalize border px-2 py-0.5 text-[10px] font-bold whitespace-nowrap`}>
-                        {statusInfo.label}
-                      </Badge>
-                    </div>
-                    <div className="col-span-2 flex items-center gap-2">
-                      {assignee ? (
-                        <>
-                          <Avatar className="w-5 h-5 shadow-sm border border-slate-200">
-                            <AvatarImage src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${assignee.id}`} />
-                            <AvatarFallback className="text-[8px] bg-slate-100">{assignee.name?.[0]}</AvatarFallback>
-                          </Avatar>
-                          <span className="text-xs text-slate-600 truncate">{assignee.name}</span>
-                        </>
-                      ) : (
-                        <span className="text-xs text-slate-400 font-medium italic">Unassigned</span>
-                      )}
-                    </div>
-                    <div className="col-span-2 text-xs text-slate-500 flex items-center justify-between pr-2">
-                      <span>{ticket.createdAt ? format(new Date(ticket.createdAt), 'MMM d, h:mm a') : 'N/A'}</span>
-                      <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-600 transition-colors" />
-                    </div>
-                  </motion.div>
-                );
-              })}
-           </div>
-        </div>
+                      <div className="col-span-2">
+                        <Badge variant="outline" className={`${statusInfo.color} capitalize border px-2 py-0.5 text-[10px] font-bold whitespace-nowrap`}>
+                          {statusInfo.label}
+                        </Badge>
+                      </div>
+                      <div className="col-span-2 flex items-center gap-2">
+                        {(ticket as any).assignedName ? (
+                          <>
+                            <Avatar className="w-5 h-5 shadow-sm border border-slate-200">
+                              <AvatarImage src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${ticket.assignedTo}`} />
+                              <AvatarFallback className="text-[8px] bg-slate-100">{(ticket as any).assignedName?.[0]}</AvatarFallback>
+                            </Avatar>
+                            <div className="flex flex-col truncate">
+                              <span className="text-xs font-bold text-slate-900 truncate">{(ticket as any).assignedName}</span>
+                              <span className="text-[8px] text-slate-400 uppercase font-black tracking-tighter">{(ticket as any).assignedRole || 'Support Specialist'}</span>
+                            </div>
+                          </>
+                        ) : (
+                          <span className="text-xs text-slate-400 font-medium italic">Unassigned</span>
+                        )}
+                      </div>
+                      <div className="col-span-2 text-xs text-slate-500 flex items-center justify-between pr-2">
+                        <span>{ticket.createdAt ? format(new Date(ticket.createdAt), 'MMM d, h:mm a') : 'N/A'}</span>
+                        <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-600 transition-colors" />
+                      </div>
+                    </motion.div>
+                  );
+                })}
+             </div>
+          </div>
+        )}
         
         {!isLoading && filteredTickets.length === 0 && (
           <div className="text-center py-20 bg-slate-50 rounded-2xl mt-4 border border-dashed border-slate-200">

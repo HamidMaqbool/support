@@ -788,6 +788,11 @@ export default function TicketDetailView({ portal }: Props) {
                <div className="flex items-center gap-2">
                  <span className="text-xs font-bold text-slate-400 font-mono tracking-tighter">#{id}</span>
                  <h1 className="text-sm font-bold text-slate-900 truncate">{ticket.subject}</h1>
+                 {(ticket as any).appName && (
+                   <Badge variant="outline" className="bg-primary/5 text-primary border-primary/10 text-[8px] font-bold uppercase tracking-tighter">
+                     {(ticket as any).appName}
+                   </Badge>
+                 )}
                </div>
                  <p className="text-[10px] text-slate-500 flex items-center gap-1">
                    <Clock size={10} /> {ticket.createdAt ? format(new Date(ticket.createdAt), 'PPp') : 'Recently'}
@@ -1353,10 +1358,16 @@ export default function TicketDetailView({ portal }: Props) {
                         </div>
                         <div className="flex items-center justify-between">
                            <span className="text-xs text-slate-500 flex items-center gap-2"><UserCheck size={12} /> Assignee</span>
-                           <span className="text-xs font-bold text-slate-700">
-                             {admins.find(a => a.id === ticket.assignedTo)?.name || 
-                              (ticket.assignedTo === user?.id ? 'Me' : 'Unassigned')}
-                           </span>
+                           <div className="text-right">
+                             {(ticket as any).assignedName ? (
+                               <>
+                                 <p className="text-xs font-bold text-slate-700">{(ticket as any).assignedName}</p>
+                                 <p className="text-[10px] text-slate-400 font-medium capitalize">{(ticket as any).assignedRole === 'admin' ? 'Support Specialist' : (ticket as any).assignedRole || 'Agent'}</p>
+                               </>
+                             ) : (
+                               <span className="text-xs font-medium text-slate-400 italic">Unassigned</span>
+                             )}
+                           </div>
                         </div>
                         {ticketTags.length > 0 ? (
                           <div className="pt-2 flex flex-wrap gap-1.5">

@@ -147,7 +147,7 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleCreateApp = async (e: React.FormEvent) => {
+  const handleCreateApp = async (e: FormEvent) => {
     e.preventDefault();
     try {
       const res = await fetch('/api/admin/apps', {
@@ -687,6 +687,11 @@ export default function AdminDashboard() {
                                <div className="flex items-center gap-2">
                                   <p className="font-black text-slate-900 text-sm">{staff.name}</p>
                                   {staff.id === currentUser?.id && <Badge className="bg-primary/10 text-primary border-none text-[8px] font-black uppercase">You</Badge>}
+                                  {staff.appName && (
+                                    <Badge variant="outline" className="bg-slate-50 text-[8px] font-bold text-slate-400 border-slate-100">
+                                      {staff.appName}
+                                    </Badge>
+                                  )}
                                </div>
                                <p className="text-xs text-slate-500 font-medium">{staff.email}</p>
                             </div>
@@ -722,7 +727,14 @@ export default function AdminDashboard() {
                                <AvatarFallback className="bg-slate-100 text-slate-500 font-bold">{user.name[0]}</AvatarFallback>
                             </Avatar>
                             <div className="flex-1">
-                               <p className="font-bold text-slate-900 text-sm">{user.name}</p>
+                               <div className="flex items-center gap-2">
+                                 <p className="font-bold text-slate-900 text-sm">{user.name}</p>
+                                 {user.appName && (
+                                   <Badge variant="outline" className="bg-primary/5 text-primary border-primary/10 text-[8px] font-bold">
+                                     {user.appName}
+                                   </Badge>
+                                 )}
+                               </div>
                                <p className="text-xs text-slate-500">{user.email}</p>
                             </div>
                             <div className="flex items-center gap-3">

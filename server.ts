@@ -108,7 +108,8 @@ async function initializeDatabase(db: mysql.Pool) {
         password VARCHAR(255),
         name VARCHAR(255) NOT NULL,
         role ENUM('user', 'admin') NOT NULL,
-        appId INT
+        appId INT,
+        avatar TEXT
       )
     `);
 
@@ -129,6 +130,10 @@ async function initializeDatabase(db: mysql.Pool) {
       if (!colNames.includes('appid')) {
         console.log('Adding appId column to users table...');
         await db.query('ALTER TABLE users ADD COLUMN appId INT');
+      }
+      if (!colNames.includes('avatar')) {
+        console.log('Adding avatar column to users table...');
+        await db.query('ALTER TABLE users ADD COLUMN avatar TEXT');
       }
       // Make password nullable for external users if it isn't already
       const passwordCol = cols.find((c: any) => c.Field.toLowerCase() === 'password');
@@ -162,6 +167,7 @@ async function initializeDatabase(db: mysql.Pool) {
         assignedTo INT,
         rating INT,
         feedback TEXT,
+        appId INT,
         createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
@@ -171,6 +177,11 @@ async function initializeDatabase(db: mysql.Pool) {
       const [cols]: any = await db.query("SHOW COLUMNS FROM tickets");
       const colNames = cols.map((c: any) => c.Field.toLowerCase());
       
+      if (!colNames.includes('appid')) {
+          console.log('Adding appId column to tickets table...');
+          await db.query('ALTER TABLE tickets ADD COLUMN appId INT');
+      }
+
       if (!colNames.includes('assignedto')) {
         console.log('Adding assignedTo column to tickets table...');
         await db.query('ALTER TABLE tickets ADD COLUMN assignedTo INT');
@@ -593,7 +604,7 @@ app.post('/api/auth/login-secure', async (req, res) => {
         const user = rows[0];
         await db.query('UPDATE secure_links SET used = TRUE WHERE token = ?', [token]);
         const jwtToken = jwt.sign({ email: user.email, role: user.role, id: user.id }, JWT_SECRET, { expiresIn: '24h' });
-        return res.json({ token: jwtToken, user: { email: user.email, role: user.role, id: user.id, name: user.name } });
+        return res.json({ token: jwtToken, user: { email: user.email, role: user.role, id: user.id, name: user.name, avatar: user.avatar } });
       }
     } catch (err) {
       console.error('Database secure login error:', err);
@@ -613,7 +624,12 @@ app.get('/api/admin/users', authenticateJWT, async (req: any, res) => {
   const db = await getDb();
   if (db) {
     try {
-      const [userRows]: any = await db.query('SELECT id, email, name, role FROM users LIMIT ? OFFSET ?', [limit, offset]);
+      const [userRows]: any = await db.query(`
+        SELECT u.id, u.email, u.name, u.role, u.appId, u.avatar, a.name as appName 
+        FROM users u 
+        LEFT JOIN apps a ON u.appId = a.id 
+        LIMIT ? OFFSET ?
+      `, [limit, offset]);
       
       // Fetch roles for each user
       const usersWithRoles = await Promise.all(userRows.map(async (user: any) => {
@@ -640,6 +656,40 @@ app.get('/api/admin/users', authenticateJWT, async (req: any, res) => {
   res.json({ users: [], pagination: { total: 0, page: 1, limit: 10, totalPages: 0 } });
 });
 
+// Profile API
+app.get('/api/me', authenticateJWT, async (req: any, res) => {
+  const db = await getDb();
+  if (db) {
+    try {
+      const [rows]: any = await db.query(`
+        SELECT u.id, u.email, u.name, u.role, u.avatar, a.name as appName 
+        FROM users u 
+        LEFT JOIN apps a ON u.appId = a.id 
+        WHERE u.id = ?
+      `, [req.user.id]);
+      if (rows.length > 0) return res.json(rows[0]);
+    } catch (err) {
+      console.error('Fetch profile error:', err);
+    }
+  }
+  res.status(404).json({ message: 'User not found' });
+});
+
+app.patch('/api/me', authenticateJWT, async (req: any, res) => {
+  const { name, avatar } = req.body;
+  const db = await getDb();
+  if (db) {
+    try {
+      await db.query('UPDATE users SET name = ?, avatar = ? WHERE id = ?', [name, avatar, req.user.id]);
+      return res.json({ success: true });
+    } catch (err) {
+      console.error('Update profile error:', err);
+      return res.status(500).json({ message: 'Error updating profile' });
+    }
+  }
+  res.status(500).json({ message: 'Database error' });
+});
+
 // Create Ticket API
 app.post('/api/tickets', authenticateJWT, async (req: any, res) => {
   const { subject, description, category, priority, attachments, isInternal } = req.body;
@@ -653,9 +703,13 @@ app.post('/api/tickets', authenticateJWT, async (req: any, res) => {
   const db = await getDb();
   if (db) {
     try {
+      // Fetch user's app info if any
+      const [userRows]: any = await db.query('SELECT appId FROM users WHERE id = ?', [userId]);
+      const userAppId = userRows.length > 0 ? userRows[0].appId : null;
+
       const [result]: any = await db.query(
-        'INSERT INTO tickets (userId, subject, description, category, priority, isInternal) VALUES (?, ?, ?, ?, ?, ?)',
-        [userId, subject, description, category, priority || 'medium', isInternal === true || isInternal === 'true']
+        'INSERT INTO tickets (userId, subject, description, category, priority, isInternal, appId) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [userId, subject, description, category, priority || 'medium', isInternal === true || isInternal === 'true', userAppId]
       );
       const ticketId = result.insertId;
 
@@ -690,15 +744,21 @@ app.get('/api/tickets', authenticateJWT, async (req: any, res) => {
   const db = await getDb();
   if (db) {
     try {
-      let query = 'SELECT * FROM tickets';
+      let query = `
+        SELECT t.*, a.name as appName, u.name as assignedName, 
+               (SELECT GROUP_CONCAT(role SEPARATOR ' / ') FROM user_roles WHERE userId = t.assignedTo) as assignedRole
+        FROM tickets t 
+        LEFT JOIN apps a ON t.appId = a.id
+        LEFT JOIN users u ON t.assignedTo = u.id
+      `;
       let params: any[] = [];
       
       if (req.user.role === 'user') {
-        query += ' WHERE userId = ?';
+        query += ' WHERE t.userId = ?';
         params.push(req.user.id);
       }
       
-      query += ' ORDER BY createdAt DESC';
+      query += ' ORDER BY t.createdAt DESC';
       const [rows] = await db.query(query, params);
       return res.json(rows);
     } catch (err) {
@@ -716,7 +776,14 @@ app.get('/api/tickets/:id', authenticateJWT, async (req: any, res) => {
   const db = await getDb();
   if (db) {
     try {
-      const [rows]: any = await db.query('SELECT * FROM tickets WHERE id = ?', [id]);
+      const [rows]: any = await db.query(`
+        SELECT t.*, a.name as appName, u.name as assignedName, 
+               (SELECT GROUP_CONCAT(role SEPARATOR ' / ') FROM user_roles WHERE userId = t.assignedTo) as assignedRole
+        FROM tickets t 
+        LEFT JOIN apps a ON t.appId = a.id 
+        LEFT JOIN users u ON t.assignedTo = u.id
+        WHERE t.id = ?
+      `, [id]);
       if (rows.length === 0) return res.status(404).json({ message: 'Ticket not found' });
       
       const ticket = rows[0];
