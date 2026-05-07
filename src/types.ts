@@ -31,6 +31,7 @@ export interface Ticket {
   status: TicketStatus;
   priority: TicketPriority;
   category: string;
+  isInternal?: boolean | number;
   assignedTo?: number | string;
   rating?: number;
   feedback?: string;

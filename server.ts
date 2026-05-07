@@ -105,11 +105,40 @@ async function initializeDatabase(db: mysql.Pool) {
       CREATE TABLE IF NOT EXISTS users (
         id INT AUTO_INCREMENT PRIMARY KEY,
         email VARCHAR(255) UNIQUE NOT NULL,
-        password VARCHAR(255) NOT NULL,
+        password VARCHAR(255),
         name VARCHAR(255) NOT NULL,
-        role ENUM('user', 'admin') NOT NULL
+        role ENUM('user', 'admin') NOT NULL,
+        appId INT
       )
     `);
+
+    // Create Apps Table
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS apps (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        token VARCHAR(128) UNIQUE NOT NULL,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Ensure columns exist for users (Migration)
+    try {
+      const [cols]: any = await db.query("SHOW COLUMNS FROM users");
+      const colNames = cols.map((c: any) => c.Field.toLowerCase());
+      if (!colNames.includes('appid')) {
+        console.log('Adding appId column to users table...');
+        await db.query('ALTER TABLE users ADD COLUMN appId INT');
+      }
+      // Make password nullable for external users if it isn't already
+      const passwordCol = cols.find((c: any) => c.Field.toLowerCase() === 'password');
+      if (passwordCol && passwordCol.Null === 'NO') {
+        console.log('Making password column nullable for external users...');
+        await db.query('ALTER TABLE users MODIFY COLUMN password VARCHAR(255)');
+      }
+    } catch (err) {
+      console.error('Error migrating users table:', err);
+    }
 
     // Create User Roles Table (for multiple support roles)
     await db.query(`
@@ -153,6 +182,10 @@ async function initializeDatabase(db: mysql.Pool) {
       if (!colNames.includes('feedback')) {
         console.log('Adding feedback column to tickets table...');
         await db.query('ALTER TABLE tickets ADD COLUMN feedback TEXT');
+      }
+      if (!colNames.includes('isinternal')) {
+        console.log('Adding isInternal column to tickets table...');
+        await db.query('ALTER TABLE tickets ADD COLUMN isInternal BOOLEAN DEFAULT FALSE');
       }
     } catch (err) {
       console.error('Error adding columns to tickets:', err);
@@ -408,6 +441,120 @@ app.get('/api/tickets/:id/tags', authenticateJWT, async (req: any, res) => {
   res.json([]);
 });
 
+// --- App Management API ---
+app.get('/api/admin/apps', authenticateJWT, async (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
+  const db = await getDb();
+  if (db) {
+    try {
+      const [rows]: any = await db.query('SELECT * FROM apps ORDER BY createdAt DESC');
+      // Count users for each app
+      const appsWithCounts = await Promise.all(rows.map(async (app: any) => {
+        const [userCount]: any = await db.query('SELECT COUNT(*) as count FROM users WHERE appId = ?', [app.id]);
+        return { ...app, userCount: userCount[0].count };
+      }));
+      return res.json(appsWithCounts);
+    } catch (err) {
+      console.error('Database list apps error:', err);
+      return res.status(500).json({ message: 'Internal server error' });
+    }
+  }
+  res.json([]);
+});
+
+app.post('/api/admin/apps', authenticateJWT, async (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
+  const { name } = req.body;
+  if (!name) return res.status(400).json({ message: 'App name is required' });
+
+  const token = crypto.randomBytes(32).toString('hex');
+  const db = await getDb();
+  if (db) {
+    try {
+      const [result]: any = await db.query('INSERT INTO apps (name, token) VALUES (?, ?)', [name, token]);
+      return res.json({ id: result.insertId, name, token, createdAt: new Date() });
+    } catch (err) {
+      console.error('Database create app error:', err);
+      return res.status(500).json({ message: 'Internal server error' });
+    }
+  }
+  res.status(500).json({ message: 'Database disconnected' });
+});
+
+app.delete('/api/admin/apps/:id', authenticateJWT, async (req: any, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
+  const { id } = req.params;
+  const db = await getDb();
+  if (db) {
+    try {
+      await db.query('DELETE FROM apps WHERE id = ?', [id]);
+      return res.json({ message: 'App deleted successfully' });
+    } catch (err) {
+      console.error('Database delete app error:', err);
+      return res.status(500).json({ message: 'Internal server error' });
+    }
+  }
+  res.status(500).json({ message: 'Database disconnected' });
+});
+
+// External Auth API (for Postman/Scripts)
+app.post('/api/external/v1/auth', async (req, res) => {
+  const { token, email, name } = req.body;
+  
+  if (!token || !email || !name) {
+    return res.status(400).json({ message: 'Token, email, and name are required' });
+  }
+
+  const db = await getDb();
+  if (!db) return res.status(500).json({ message: 'Database error' });
+
+  try {
+    // 1. Validate App Token
+    const [appRows]: any = await db.query('SELECT id FROM apps WHERE token = ?', [token]);
+    if (appRows.length === 0) {
+      return res.status(401).json({ message: 'Invalid application token' });
+    }
+    const appId = appRows[0].id;
+
+    // 2. Find or Create User
+    let userId;
+    const [userRows]: any = await db.query('SELECT id FROM users WHERE email = ?', [email]);
+    
+    if (userRows.length > 0) {
+      userId = userRows[0].id;
+      // Update appId if not set
+      await db.query('UPDATE users SET appId = ?, name = ? WHERE id = ?', [appId, name, userId]);
+    } else {
+      const [result]: any = await db.query(
+        'INSERT INTO users (email, name, role, appId) VALUES (?, ?, "user", ?)',
+        [email, name, appId]
+      );
+      userId = result.insertId;
+    }
+
+    // 3. Generate Magic Link Token
+    const magicToken = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 15); // 15 minutes
+    await db.query('INSERT INTO secure_links (token, userId, expiresAt) VALUES (?, ?, ?)', [magicToken, userId, expiresAt]);
+
+    // 4. Construct Login URL
+    // We assume the frontend handles /login/magic?token=...
+    const protocol = req.headers['x-forwarded-proto'] || 'http';
+    const host = req.headers.host;
+    const loginUrl = `${protocol}://${host}/secure-login/${magicToken}`;
+
+    return res.json({ 
+      success: true, 
+      userId, 
+      loginUrl,
+      message: 'Login URL generated successfully' 
+    });
+  } catch (err) {
+    console.error('External auth error:', err);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
 // Secure Login API
 app.post('/api/auth/secure-link', authenticateJWT, async (req: any, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
@@ -495,7 +642,7 @@ app.get('/api/admin/users', authenticateJWT, async (req: any, res) => {
 
 // Create Ticket API
 app.post('/api/tickets', authenticateJWT, async (req: any, res) => {
-  const { subject, description, category, priority } = req.body;
+  const { subject, description, category, priority, attachments, isInternal } = req.body;
   
   // Ensure userId is a number if possible
   let userId = req.user.id;
@@ -507,12 +654,23 @@ app.post('/api/tickets', authenticateJWT, async (req: any, res) => {
   if (db) {
     try {
       const [result]: any = await db.query(
-        'INSERT INTO tickets (userId, subject, description, category, priority) VALUES (?, ?, ?, ?, ?)',
-        [userId, subject, description, category, priority || 'medium']
+        'INSERT INTO tickets (userId, subject, description, category, priority, isInternal) VALUES (?, ?, ?, ?, ?, ?)',
+        [userId, subject, description, category, priority || 'medium', isInternal === true || isInternal === 'true']
       );
       const ticketId = result.insertId;
-      io.emit('new-ticket', { id: ticketId, subject, userId });
-      return res.json({ id: ticketId, userId, subject, description, category, priority: priority || 'medium', status: 'open' });
+
+      // Handle attachments if any
+      if (attachments && Array.isArray(attachments)) {
+        for (const file of attachments) {
+          await db.query(
+            'INSERT INTO attachments (ticketId, fileName, fileUrl, fileType, fileSize, isInternal) VALUES (?, ?, ?, ?, ?, ?)',
+            [ticketId, file.fileName, file.fileUrl, file.fileType, file.fileSize, isInternal === true || isInternal === 'true']
+          );
+        }
+      }
+
+      io.emit('new-ticket', { id: ticketId, subject, userId, isInternal });
+      return res.json({ id: ticketId, userId, subject, description, category, priority: priority || 'medium', status: 'open', isInternal });
     } catch (err: any) {
       console.error('Database create ticket error:', err);
       return res.status(500).json({ 

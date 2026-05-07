@@ -1,5 +1,5 @@
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, FormEvent } from 'react';
 import { motion } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -24,7 +24,10 @@ import {
   MessageSquareQuote,
   Trash2,
   ShieldAlert,
-  UserCheck
+  UserCheck,
+  Plus,
+  Send,
+  Paperclip
 } from 'lucide-react';
 import { getSocket } from '../../lib/socket';
 import { MOCK_USERS } from '../../constants';
@@ -41,6 +44,8 @@ import {
   DialogDescription,
   DialogFooter
 } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '../../lib/AuthContext';
 import { Ticket } from '../../types';
 
@@ -59,6 +64,16 @@ export default function AdminDashboard() {
   const [userPage, setUserPage] = useState(1);
   const [feedbackData, setFeedbackData] = useState<any>(null);
   const [feedbackPage, setFeedbackPage] = useState(1);
+  const [apps, setApps] = useState<any[]>([]);
+  const [isNewTicketOpen, setIsNewTicketOpen] = useState(false);
+  const [isNewAppOpen, setIsNewAppOpen] = useState(false);
+  const [newAppName, setNewAppName] = useState('');
+  const [newTicket, setNewTicket] = useState({ subject: '', category: 'Technical', message: '' });
+  const [isInternal, setIsInternal] = useState(true);
+  const [attachments, setAttachments] = useState<File[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
   const isManager = currentUser?.role === 'admin' && (currentUser as any)?.roles?.includes('manager');
 
   const playSound = () => {
@@ -108,13 +123,68 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     fetchTickets();
-    if (activeTab === 'customers') {
+    if (activeTab === 'customers' || activeTab === 'staff' || activeTab === 'inbox') {
       fetchUsers(userPage);
     }
     if (activeTab === 'feedback') {
       fetchFeedbackStats(feedbackPage);
     }
+    if (activeTab === 'apps') {
+      fetchApps();
+    }
   }, [token, activeTab, userPage, feedbackPage]);
+
+  const fetchApps = async () => {
+    try {
+      const res = await fetch('/api/admin/apps', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setApps(await res.json());
+      }
+    } catch (err) {
+      console.error('Fetch apps error:', err);
+    }
+  };
+
+  const handleCreateApp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('/api/admin/apps', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}` 
+        },
+        body: JSON.stringify({ name: newAppName })
+      });
+      if (res.ok) {
+        const newApp = await res.json();
+        setApps([newApp, ...apps]);
+        setIsNewAppOpen(false);
+        setNewAppName('');
+        toast.success('Application created successfully!');
+      }
+    } catch (err) {
+      console.error('Create app error:', err);
+      toast.error('Failed to create application');
+    }
+  };
+
+  const handleDeleteApp = async (appId: number) => {
+    try {
+      const res = await fetch(`/api/admin/apps/${appId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setApps(apps.filter(a => a.id !== appId));
+        toast.success('Application deleted');
+      }
+    } catch (err) {
+      console.error('Delete app error:', err);
+    }
+  };
 
   const fetchFeedbackStats = async (page = 1) => {
     try {
@@ -232,6 +302,67 @@ export default function AdminDashboard() {
     }
   };
 
+  const handleCreateTicket = async (e: FormEvent) => {
+    e.preventDefault();
+    setUploading(true);
+    try {
+      const uploadedAttachments = [];
+      if (attachments.length > 0) {
+        for (const file of attachments) {
+          const formData = new FormData();
+          formData.append('file', file);
+          const uploadRes = await fetch('/api/upload', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` },
+            body: formData
+          });
+          if (uploadRes.ok) {
+            const data = await uploadRes.json();
+            uploadedAttachments.push({
+              fileName: data.fileName,
+              fileUrl: data.url,
+              fileType: file.type,
+              fileSize: file.size
+            });
+          }
+        }
+      }
+
+      const res = await fetch('/api/tickets', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}` 
+        },
+        body: JSON.stringify({
+          subject: newTicket.subject,
+          description: newTicket.message,
+          category: newTicket.category,
+          priority: 'medium',
+          attachments: uploadedAttachments,
+          isInternal: isInternal
+        })
+      });
+
+      if (res.ok) {
+        const created = await res.json();
+        setTickets([created, ...tickets]);
+        toast.success('Internal ticket created successfully!');
+        setIsNewTicketOpen(false);
+        setNewTicket({ subject: '', category: 'Technical', message: '' });
+        setAttachments([]);
+      } else {
+        const errorData = await res.json();
+        toast.error(`Failed: ${errorData.message}`);
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Something went wrong');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const agents = MOCK_USERS.filter(u => u.name.includes('Support') || [' Sarah', 'Alex'].some(n => u.name.includes(n)));
 
   const getPriorityColor = (priority: string) => {
@@ -245,7 +376,7 @@ export default function AdminDashboard() {
 
   const filteredTickets = tickets.filter(t => 
     t.subject.toLowerCase().includes(adminSearch.toLowerCase()) || 
-    t.id.toLowerCase().includes(adminSearch.toLowerCase())
+    t.id.toString().toLowerCase().includes(adminSearch.toLowerCase())
   );
 
   const stats = [
@@ -277,6 +408,7 @@ export default function AdminDashboard() {
         <div className="flex-1 py-6 px-3 flex flex-col gap-1 overflow-hidden whitespace-nowrap">
           {[
             { id: 'inbox', label: 'Ticket Inbox', icon: Inbox },
+            { id: 'apps', label: 'External Apps', icon: ArrowUpRight },
             { id: 'analytics', label: 'Support Metrics', icon: BarChart3 },
             { id: 'staff', label: 'Support Team', icon: ShieldAlert },
             { id: 'customers', label: 'Customers', icon: Users },
@@ -337,6 +469,13 @@ export default function AdminDashboard() {
              </div>
           </div>
           <div className="flex items-center gap-3">
+             <Button 
+               size="sm" 
+               onClick={() => setIsNewTicketOpen(true)}
+               className="rounded-lg h-9 bg-primary hover:bg-primary/90 text-white border-none gap-2"
+             >
+                <Plus size={16} /> New Ticket
+             </Button>
              <Button variant="outline" size="sm" className="rounded-lg gap-2 text-xs font-semibold">
                 <Clock size={14} /> Live Stream
              </Button>
@@ -404,6 +543,11 @@ export default function AdminDashboard() {
                                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">#{ticket.id}</span>
                                       <span className="text-[10px] font-bold text-slate-400">•</span>
                                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{ticket.category}</span>
+                                      {ticket.isInternal && (
+                                        <Badge className="bg-amber-100 text-amber-700 border-none text-[8px] font-black uppercase tracking-tighter h-4 px-1.5 flex items-center gap-1">
+                                          <ShieldAlert size={8} /> Internal
+                                        </Badge>
+                                      )}
                                    </div>
                                    <h4 className="font-bold text-slate-900 group-hover:text-primary transition-colors truncate">{ticket.subject}</h4>
                                    <p className="text-xs text-slate-500 truncate mt-0.5">{ticket.description}</p>
@@ -630,6 +774,115 @@ export default function AdminDashboard() {
                     )}
                   </div>
                 </>
+              ) : activeTab === 'apps' ? (
+                <>
+                  <header className="mb-8 flex items-center justify-between">
+                    <div>
+                      <h2 className="text-2xl font-bold text-slate-900 mb-1">External Applications</h2>
+                      <p className="text-slate-500 text-sm">Manage API integrations and secure access tokens for external platforms.</p>
+                    </div>
+                    <Button 
+                      onClick={() => setIsNewAppOpen(true)}
+                      className="rounded-xl bg-primary text-white hover:bg-primary/90 h-10 px-6 gap-2"
+                    >
+                      <Plus size={18} /> Register App
+                    </Button>
+                  </header>
+
+                  <div className="grid grid-cols-1 gap-6">
+                    {apps.map((app) => (
+                      <div key={app.id} className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm relative overflow-hidden group">
+                        <div className="flex items-start justify-between relative z-10">
+                          <div className="flex gap-4">
+                            <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-400 group-hover:bg-primary/10 group-hover:text-primary transition-all">
+                              <ArrowUpRight size={24} />
+                            </div>
+                            <div>
+                              <h3 className="text-lg font-bold text-slate-900 mb-1">{app.name}</h3>
+                              <div className="flex items-center gap-4 text-xs text-slate-500 font-medium">
+                                <span className="flex items-center gap-1.5">
+                                  <Users size={14} /> {app.userCount || 0} users Associated
+                                </span>
+                                <span className="flex items-center gap-1.5">
+                                  <Clock size={14} /> Created {app.createdAt ? format(new Date(app.createdAt), 'MMM d, yyyy') : 'Recently'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="text-slate-300 hover:text-red-500 hover:bg-red-50"
+                            onClick={() => handleDeleteApp(app.id)}
+                          >
+                            <Trash2 size={18} />
+                          </Button>
+                        </div>
+
+                        <div className="mt-6 p-4 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between">
+                          <div className="flex-1">
+                            <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-1">Application Token (Secret)</p>
+                            <code className="text-xs font-mono font-bold text-slate-700 bg-white px-2 py-1 rounded border border-slate-200 block truncate">
+                              {app.token}
+                            </code>
+                          </div>
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            className="ml-4 text-[10px] font-bold h-8 text-primary hover:bg-primary/5"
+                            onClick={() => {
+                              navigator.clipboard.writeText(app.token);
+                              toast.success('Token copied to clipboard!');
+                            }}
+                          >
+                            Copy Token
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                    
+                    {apps.length === 0 && (
+                      <div className="p-20 text-center bg-white rounded-3xl border-2 border-dashed border-slate-200">
+                        <div className="w-16 h-16 bg-slate-50 rounded-3xl flex items-center justify-center text-slate-300 mx-auto mb-4">
+                          <ArrowUpRight size={32} />
+                        </div>
+                        <h4 className="text-slate-900 font-bold mb-1">No applications registered</h4>
+                        <p className="text-slate-500 text-sm mb-6 max-w-sm mx-auto">Register your first application to start using external authentication and automated user onboarding.</p>
+                        <Button onClick={() => setIsNewAppOpen(true)} variant="outline" className="rounded-xl px-6">Create Secret Token</Button>
+                      </div>
+                    )}
+                  </div>
+
+                  <Dialog open={isNewAppOpen} onOpenChange={setIsNewAppOpen}>
+                    <DialogContent className="sm:max-w-md bg-white border-0 shadow-2xl rounded-[32px]">
+                      <DialogHeader>
+                        <DialogTitle className="text-2xl font-bold">Register Application</DialogTitle>
+                        <DialogDescription className="text-slate-500">
+                          Create a new application identity. This will generate a secret token for API authentication.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <form onSubmit={handleCreateApp} className="space-y-6 py-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="appName" className="text-xs font-bold uppercase tracking-wider text-slate-400">Application Name</Label>
+                          <Input 
+                            id="appName" 
+                            placeholder="e.g., Nexus CRM, Billing Portal..." 
+                            required 
+                            className="h-12 rounded-xl bg-slate-50 border-0 focus-visible:ring-2 focus-visible:ring-primary/20"
+                            value={newAppName}
+                            onChange={(e) => setNewAppName(e.target.value)}
+                          />
+                        </div>
+                        <DialogFooter>
+                          <Button type="button" variant="ghost" onClick={() => setIsNewAppOpen(false)} className="rounded-xl h-12">Cancel</Button>
+                          <Button type="submit" className="bg-slate-900 hover:bg-slate-800 text-white rounded-xl px-8 h-12">
+                            Create App
+                          </Button>
+                        </DialogFooter>
+                      </form>
+                    </DialogContent>
+                  </Dialog>
+                </>
               ) : activeTab === 'feedback' ? (
                 <>
                   <header className="mb-8">
@@ -746,6 +999,126 @@ export default function AdminDashboard() {
                 </div>
               )}
            </div>
+            <Dialog open={isNewTicketOpen} onOpenChange={setIsNewTicketOpen}>
+              <DialogContent className="sm:max-w-md bg-white border-0 shadow-2xl rounded-[32px]">
+                <DialogHeader>
+                  <DialogTitle className="text-2xl font-bold">Create Internal Ticket</DialogTitle>
+                  <DialogDescription className="text-slate-500">
+                    Internal tickets are only visible to support specialists and managers.
+                  </DialogDescription>
+                </DialogHeader>
+                <form onSubmit={handleCreateTicket} className="space-y-6 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="subject" className="text-xs font-bold uppercase tracking-wider text-slate-400">Subject</Label>
+                    <Input 
+                      id="subject" 
+                      placeholder="e.g., Internal server maintenance" 
+                      required 
+                      className="h-12 rounded-xl bg-slate-50 border-0 focus-visible:ring-2 focus-visible:ring-primary/20"
+                      value={newTicket.subject}
+                      onChange={(e) => setNewTicket({...newTicket, subject: e.target.value})}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="category" className="text-xs font-bold uppercase tracking-wider text-slate-400">Category</Label>
+                    <select 
+                      id="category"
+                      className="w-full h-12 rounded-xl bg-slate-50 border-0 px-3 text-sm focus:ring-2 focus:ring-primary/20 outline-none"
+                      value={newTicket.category}
+                      onChange={(e) => setNewTicket({...newTicket, category: e.target.value})}
+                    >
+                      <option>Technical</option>
+                      <option>Billing</option>
+                      <option>Account</option>
+                      <option>Feature Request</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="message" className="text-xs font-bold uppercase tracking-wider text-slate-400">Notes / Details</Label>
+                    <Textarea 
+                      id="message" 
+                      placeholder="Provide internal context..." 
+                      required 
+                      className="min-h-[120px] rounded-xl bg-slate-50 border-0 focus-visible:ring-2 focus-visible:ring-primary/20 resize-none"
+                      value={newTicket.message}
+                      onChange={(e) => setNewTicket({...newTicket, message: e.target.value})}
+                    />
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-bold uppercase tracking-wider text-slate-400">Attachments</Label>
+                      <Button 
+                        type="button" 
+                        variant="ghost" 
+                        size="sm" 
+                        onClick={() => fileInputRef.current?.click()}
+                        className="text-xs rounded-lg h-7 font-bold text-primary hover:bg-primary/5"
+                      >
+                        <Plus size={12} className="mr-1" /> Add Files
+                      </Button>
+                      <input 
+                        type="file" 
+                        ref={fileInputRef} 
+                        className="hidden" 
+                        multiple 
+                        onChange={(e) => {
+                          if (e.target.files) {
+                            setAttachments([...attachments, ...Array.from(e.target.files)]);
+                          }
+                        }} 
+                      />
+                    </div>
+                    
+                    {attachments.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                         {attachments.map((file, idx) => (
+                           <div key={idx} className="bg-slate-50 text-slate-600 px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-2 border border-slate-100 group">
+                              <span className="max-w-[150px] truncate">{file.name}</span>
+                              <button 
+                                type="button"
+                                onClick={() => setAttachments(attachments.filter((_, i) => i !== idx))} 
+                                className="text-slate-400 hover:text-red-500 transition-colors"
+                              >
+                                <X size={12} />
+                              </button>
+                           </div>
+                         ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between p-4 bg-amber-50/50 rounded-2xl border border-amber-100/50">
+                    <div className="flex items-center gap-3">
+                       <div className="p-2 bg-amber-100 text-amber-600 rounded-lg">
+                          <ShieldAlert size={16} />
+                       </div>
+                       <div>
+                          <p className="text-sm font-bold text-slate-900">Internal Ticket</p>
+                          <p className="text-[10px] text-slate-500">Visible only to admins</p>
+                       </div>
+                    </div>
+                    <button 
+                      type="button"
+                      onClick={() => setIsInternal(!isInternal)}
+                      className={`w-10 h-5 rounded-full transition-all relative ${isInternal ? 'bg-amber-500' : 'bg-slate-200'}`}
+                    >
+                      <div className={`absolute top-1 w-3 h-3 rounded-full bg-white transition-all ${isInternal ? 'right-1' : 'left-1'}`} />
+                    </button>
+                  </div>
+
+                  <DialogFooter className="sm:justify-end gap-2">
+                    <Button type="button" variant="ghost" onClick={() => {
+                      setIsNewTicketOpen(false);
+                      setAttachments([]);
+                    }} className="rounded-xl">Cancel</Button>
+                    <Button type="submit" disabled={uploading} className="bg-slate-900 hover:bg-slate-800 text-white rounded-xl px-6 gap-2">
+                      {uploading ? <Loader2 size={16} className="animate-spin" /> : <>Create Ticket <Send size={16} /></>}
+                    </Button>
+                  </DialogFooter>
+                </form>
+              </DialogContent>
+            </Dialog>
         </main>
       </div>
     </div>

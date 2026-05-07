@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import * as React from 'react';
+import { ReactNode } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from '@/components/ui/sonner';
 import UserDashboard from './components/user/UserDashboard';
@@ -14,7 +14,7 @@ import LoginView from './components/LoginView';
 import SecureLoginView from './components/SecureLoginView';
 import { AuthProvider, useAuth } from './lib/AuthContext';
 
-function ProtectedRoute({ children, role }: { children: React.ReactNode, role?: 'user' | 'admin' }) {
+function ProtectedRoute({ children, role }: { children: ReactNode, role?: 'user' | 'admin' }) {
   const { isAuthenticated, user } = useAuth();
   
   if (!isAuthenticated) return <Navigate to={`/login?role=${role || 'user'}`} replace />;

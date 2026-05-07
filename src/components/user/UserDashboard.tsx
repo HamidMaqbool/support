@@ -1,6 +1,5 @@
 
-import * as React from 'react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, FormEvent } from 'react';
 import { motion } from 'motion/react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -55,6 +54,9 @@ export default function UserDashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [admins, setAdmins] = useState<any[]>([]);
   const [newTicket, setNewTicket] = useState({ subject: '', category: 'Technical', message: '' });
+  const [attachments, setAttachments] = useState<File[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const socket = getSocket();
@@ -151,9 +153,39 @@ export default function UserDashboard() {
     }
   };
 
-  const handleCreateTicket = async (e: React.FormEvent) => {
+  const handleCreateTicket = async (e: FormEvent) => {
     e.preventDefault();
+    setUploading(true);
     try {
+      // 1. Upload attachments first if any
+      const uploadedAttachments = [];
+      if (attachments.length > 0) {
+        for (const file of attachments) {
+          const formData = new FormData();
+          formData.append('file', file);
+          // We don't have a ticketId yet, so we'll link it after creation or 
+          // the server will handle it if we send the URLs.
+          // Since our /api/upload requires a ticketId optionally, we can call it without it.
+          
+          const uploadRes = await fetch('/api/upload', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` },
+            body: formData
+          });
+          
+          if (uploadRes.ok) {
+            const data = await uploadRes.json();
+            uploadedAttachments.push({
+              fileName: data.fileName,
+              fileUrl: data.url,
+              fileType: file.type,
+              fileSize: file.size
+            });
+          }
+        }
+      }
+
+      // 2. Create the ticket with attachment info
       const res = await fetch('/api/tickets', {
         method: 'POST',
         headers: { 
@@ -164,7 +196,9 @@ export default function UserDashboard() {
           subject: newTicket.subject,
           description: newTicket.message,
           category: newTicket.category,
-          priority: 'medium'
+          priority: 'medium',
+          attachments: uploadedAttachments,
+          isInternal: false // Default to false for user dashboard
         })
       });
 
@@ -174,6 +208,7 @@ export default function UserDashboard() {
         toast.success('Support ticket created successfully!');
         setIsNewTicketOpen(false);
         setNewTicket({ subject: '', category: 'Technical', message: '' });
+        setAttachments([]);
       } else {
         const errorData = await res.json();
         toast.error(`Failed to create ticket: ${errorData.message || 'Unknown error'}`);
@@ -182,6 +217,8 @@ export default function UserDashboard() {
     } catch (err) {
       console.error('Create ticket error:', err);
       toast.error('Something went wrong');
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -295,10 +332,57 @@ export default function UserDashboard() {
                     onChange={(e) => setNewTicket({...newTicket, message: e.target.value})}
                   />
                 </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-bold uppercase tracking-wider text-slate-400">Attachments</Label>
+                    <Button 
+                      type="button" 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={() => fileInputRef.current?.click()}
+                      className="text-xs rounded-lg h-7 font-bold text-primary hover:bg-primary/5"
+                    >
+                      <Plus size={12} className="mr-1" /> Add Files
+                    </Button>
+                    <input 
+                      type="file" 
+                      ref={fileInputRef} 
+                      className="hidden" 
+                      multiple 
+                      onChange={(e) => {
+                        if (e.target.files) {
+                          setAttachments([...attachments, ...Array.from(e.target.files)]);
+                        }
+                      }} 
+                    />
+                  </div>
+                  
+                  {attachments.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                       {attachments.map((file, idx) => (
+                         <div key={idx} className="bg-slate-50 text-slate-600 px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-2 border border-slate-100 group">
+                            <span className="max-w-[150px] truncate">{file.name}</span>
+                            <button 
+                              type="button"
+                              onClick={() => setAttachments(attachments.filter((_, i) => i !== idx))} 
+                              className="text-slate-400 hover:text-red-500 transition-colors"
+                            >
+                              <X size={12} />
+                            </button>
+                         </div>
+                       ))}
+                    </div>
+                  )}
+                </div>
+
                 <DialogFooter className="sm:justify-end gap-2">
-                  <Button type="button" variant="ghost" onClick={() => setIsNewTicketOpen(false)} className="rounded-xl">Cancel</Button>
-                  <Button type="submit" className="bg-slate-900 hover:bg-slate-800 text-white rounded-xl px-6 gap-2">
-                    Submit Ticket <Send size={16} />
+                  <Button type="button" variant="ghost" onClick={() => {
+                    setIsNewTicketOpen(false);
+                    setAttachments([]);
+                  }} className="rounded-xl">Cancel</Button>
+                  <Button type="submit" disabled={uploading} className="bg-slate-900 hover:bg-slate-800 text-white rounded-xl px-6 gap-2">
+                    {uploading ? <Loader2 size={16} className="animate-spin" /> : <>Submit Ticket <Send size={16} /></>}
                   </Button>
                 </DialogFooter>
               </form>

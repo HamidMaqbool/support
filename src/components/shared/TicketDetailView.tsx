@@ -1,6 +1,5 @@
 
-import * as React from 'react';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, UIEvent, ChangeEvent, FormEvent } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -274,7 +273,7 @@ export default function TicketDetailView({ portal }: Props) {
     }
   }, [messages, isLoading, ticket?.status, ticket?.rating]);
 
-  const handleScroll = async (e: React.UIEvent<HTMLDivElement>) => {
+  const handleScroll = async (e: UIEvent<HTMLDivElement>) => {
     const target = e.currentTarget;
     if (target.scrollTop === 0 && hasMore && !isFetchingMore && messages.length > 0) {
       setIsFetchingMore(true);
@@ -411,7 +410,7 @@ export default function TicketDetailView({ portal }: Props) {
     }, 2000);
   };
 
-  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const onFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       setAttachments([...attachments, ...Array.from(e.target.files)]);
     }
@@ -600,9 +599,34 @@ export default function TicketDetailView({ portal }: Props) {
 
   const requestor = MOCK_USERS.find(u => u.id === ticket.userId) || { name: 'Customer', avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${ticket.userId}`, email: 'customer@example.com' };
 
-  const handleCreateTicket = async (e: React.FormEvent) => {
+  const handleCreateTicket = async (e: FormEvent) => {
     e.preventDefault();
+    setUploading(true);
     try {
+      // 1. Upload attachments if any
+      const uploadedAttachments = [];
+      if (attachments.length > 0) {
+        for (const file of attachments) {
+          const formData = new FormData();
+          formData.append('file', file);
+          const uploadRes = await fetch('/api/upload', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` },
+            body: formData
+          });
+          if (uploadRes.ok) {
+            const data = await uploadRes.json();
+            uploadedAttachments.push({
+              fileName: data.fileName,
+              fileUrl: data.url,
+              fileType: file.type,
+              fileSize: file.size
+            });
+          }
+        }
+      }
+
+      // 2. Create ticket
       const res = await fetch('/api/tickets', {
         method: 'POST',
         headers: { 
@@ -613,7 +637,9 @@ export default function TicketDetailView({ portal }: Props) {
           subject: newTicket.subject,
           description: newTicket.message,
           category: newTicket.category,
-          priority: 'medium'
+          priority: 'medium',
+          attachments: uploadedAttachments,
+          isInternal: portal === 'admin' ? isInternal : false
         })
       });
 
@@ -622,7 +648,9 @@ export default function TicketDetailView({ portal }: Props) {
         toast.success('Support ticket created successfully!');
         setIsNewTicketOpen(false);
         setNewTicket({ subject: '', category: 'Technical', message: '' });
-        navigate(`/user/ticket/${created.id}`);
+        setAttachments([]);
+        setIsInternal(false);
+        navigate(portal === 'admin' ? `/admin/ticket/${created.id}` : `/user/ticket/${created.id}`);
       } else {
         const errorData = await res.json();
         toast.error(`Failed to create ticket: ${errorData.message || 'Unknown error'}`);
@@ -631,6 +659,8 @@ export default function TicketDetailView({ portal }: Props) {
     } catch (err) {
       console.error('Create ticket error:', err);
       toast.error('Something went wrong');
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -681,10 +711,67 @@ export default function TicketDetailView({ portal }: Props) {
                 onChange={(e) => setNewTicket({...newTicket, message: e.target.value})}
               />
             </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-bold uppercase tracking-wider text-slate-400">Attachments</Label>
+                <Button 
+                  type="button" 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="text-xs rounded-lg h-7 font-bold text-primary hover:bg-primary/5"
+                >
+                  <Paperclip size={12} className="mr-1" /> Add Files
+                </Button>
+              </div>
+              
+              {attachments.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                   {attachments.map((file, idx) => (
+                     <div key={idx} className="bg-slate-50 text-slate-600 px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-2 border border-slate-100 group">
+                        <span className="max-w-[150px] truncate">{file.name}</span>
+                        <button 
+                          type="button"
+                          onClick={() => setAttachments(attachments.filter((_, i) => i !== idx))} 
+                          className="text-slate-400 hover:text-red-500 transition-colors"
+                        >
+                          <X size={12} />
+                        </button>
+                     </div>
+                   ))}
+                </div>
+              )}
+            </div>
+
+            {portal === 'admin' && (
+              <div className="flex items-center justify-between p-4 bg-amber-50/50 rounded-2xl border border-amber-100/50">
+                <div className="flex items-center gap-3">
+                   <div className="p-2 bg-amber-100 text-amber-600 rounded-lg">
+                      <ShieldAlert size={16} />
+                   </div>
+                   <div>
+                      <p className="text-sm font-bold text-slate-900">Internal Ticket</p>
+                      <p className="text-[10px] text-slate-500">Only visible to support staff</p>
+                   </div>
+                </div>
+                <button 
+                  type="button"
+                  onClick={() => setIsInternal(!isInternal)}
+                  className={`w-10 h-5 rounded-full transition-all relative ${isInternal ? 'bg-amber-500' : 'bg-slate-200'}`}
+                >
+                  <div className={`absolute top-1 w-3 h-3 rounded-full bg-white transition-all ${isInternal ? 'right-1' : 'left-1'}`} />
+                </button>
+              </div>
+            )}
+
             <DialogFooter className="sm:justify-end gap-2">
-              <Button type="button" variant="ghost" onClick={() => setIsNewTicketOpen(false)} className="rounded-xl">Cancel</Button>
-              <Button type="submit" className="bg-slate-900 hover:bg-slate-800 text-white rounded-xl px-6 gap-2">
-                Submit Ticket <Send size={16} />
+              <Button type="button" variant="ghost" onClick={() => {
+                setIsNewTicketOpen(false);
+                setAttachments([]);
+              }} className="rounded-xl">Cancel</Button>
+              <Button type="submit" disabled={uploading} className="bg-slate-900 hover:bg-slate-800 text-white rounded-xl px-6 gap-2">
+                {uploading ? <Loader2 size={16} className="animate-spin" /> : <>Submit Ticket <Send size={16} /></>}
               </Button>
             </DialogFooter>
           </form>
@@ -784,7 +871,35 @@ export default function TicketDetailView({ portal }: Props) {
                  </div>
                  <div className="bg-white p-6 rounded-2xl rounded-tl-none border border-slate-200 shadow-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
                    {ticket.description}
+                   
+                   {ticketAttachments.filter(a => !a.messageId).length > 0 && (
+                     <div className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap gap-2">
+                       {ticketAttachments.filter(a => !a.messageId).map((file, idx) => {
+                         const isImage = typeof file.fileUrl === 'string' && /\.(jpg|jpeg|png|gif|webp)$/i.test(file.fileUrl);
+                         return (
+                           <div key={idx} className="flex flex-col gap-2 p-2 rounded-lg bg-slate-50 border border-slate-100">
+                              {isImage && (
+                                <img src={file.fileUrl} alt="preview" className="max-w-[150px] max-h-[100px] rounded object-cover cursor-pointer hover:opacity-90 transition-opacity" onClick={() => window.open(file.fileUrl, '_blank')} />
+                              )}
+                              <div className="flex items-center gap-2">
+                                <FileText size={12} className="text-slate-400" />
+                                <a href={file.fileUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] font-bold text-slate-600 hover:underline truncate max-w-[120px]">
+                                   {file.fileName}
+                                </a>
+                              </div>
+                           </div>
+                         );
+                       })}
+                     </div>
+                   )}
                  </div>
+                 
+                 {ticket.isInternal ? (
+                   <div className="mt-2 flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-100 rounded-xl text-amber-700">
+                     <ShieldAlert size={14} />
+                     <span className="text-[10px] font-bold uppercase tracking-wider">Internal Confidential Ticket</span>
+                   </div>
+                 ) : null}
                </div>
             </div>
 
