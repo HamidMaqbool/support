@@ -586,8 +586,8 @@ app.post('/api/auth/login-secure', async (req, res) => {
         SELECT u.*, sl.expiresAt, sl.used 
         FROM users u
         JOIN secure_links sl ON u.id = sl.userId
-        WHERE sl.token = ? AND sl.expiresAt > NOW() AND sl.used = FALSE
-      `, [token]);
+        WHERE sl.token = ? AND sl.expiresAt > ? AND sl.used = FALSE
+      `, [token, new Date()]);
       
       if (rows.length > 0) {
         const user = rows[0];

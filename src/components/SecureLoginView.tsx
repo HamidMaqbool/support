@@ -1,5 +1,5 @@
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/AuthContext';
 import { toast } from 'sonner';
@@ -8,10 +8,19 @@ import { Loader2 } from 'lucide-react';
 export default function SecureLoginView() {
   const { token } = useParams();
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { login, isAuthenticated, user: authUser } = useAuth();
 
   useEffect(() => {
+    if (isAuthenticated) {
+      navigate(authUser?.role === 'admin' ? '/admin' : '/user');
+      return;
+    }
+
     const performSecureLogin = async () => {
+      const storageKey = `sec_login_${token}`;
+      if (sessionStorage.getItem(storageKey)) return;
+      sessionStorage.setItem(storageKey, 'true');
+      
       try {
         const res = await fetch('/api/auth/login-secure', {
           method: 'POST',
@@ -25,10 +34,12 @@ export default function SecureLoginView() {
           toast.success('Secure login successful');
           navigate(data.user.role === 'admin' ? '/admin' : '/user');
         } else {
+          sessionStorage.removeItem(storageKey);
           toast.error('Invalid or expired secure link');
           navigate('/');
         }
       } catch (err) {
+        sessionStorage.removeItem(storageKey);
         console.error('Secure login error:', err);
         toast.error('Connection error');
         navigate('/');
@@ -38,7 +49,7 @@ export default function SecureLoginView() {
     if (token) {
       performSecureLogin();
     }
-  }, [token, login, navigate]);
+  }, [token, login, navigate, isAuthenticated, authUser]);
 
   return (
     <div className="h-screen flex items-center justify-center bg-slate-50">
